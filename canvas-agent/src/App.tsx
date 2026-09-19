@@ -1,3 +1,4 @@
+import { ThemeToggle } from './ui'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { loadConfig, saveConfig, type AIConfig } from './ai'
 import { ConfigModal } from './ConfigModal'
@@ -110,6 +111,7 @@ export default function App() {
             </button>
             <span className="text-zinc-700">/</span>
             <span className="font-mono text-[11px] text-zinc-300">experiments · double-slit</span>
+            <ThemeToggle className="ml-auto" />
           </nav>
           <div className="min-h-0 flex-1">
             <PageScience />

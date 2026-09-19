@@ -1,4 +1,6 @@
-import { generateValidated, type AIConfig } from './ai'
+import { callModel, generateValidated, parseModelJson, type AIConfig } from './ai'
+import { ART_KINDS, googleFontsHref, extrasSystemPrompt, extrasUserPrompt, isIconName, mergeModelExtras, type ArtKind, type LanguageExtras, type OverlayKind } from './language'
+import type { LibraryId } from './realui/catalog'
 
 /* ================================================================== *
  *  Design Lab — open-ended, first-principles design generation.
@@ -41,6 +43,10 @@ export interface ComponentDef {
   variants?: Record<string, StyleDecl>
   /** Real library usage (for built-in systems), e.g. the shadcn/ui JSX for this component. */
   code?: string
+  /** Behavior per state (hover, focus, active, disabled, loading, error, selected…): partial style overrides. */
+  states?: Record<string, StyleDecl>
+  /** Set on overlay components (modal, drawer, popover, tooltip, toast, menu). */
+  overlay?: OverlayKind
 }
 
 export interface LabNode {
@@ -51,6 +57,10 @@ export interface LabNode {
   element?: 'div' | 'button'
   style?: StyleDecl
   text?: string
+  /** A glyph from the language's icon pool (lucide), drawn with the language's icon style. */
+  icon?: string
+  /** A picture: generated art in the language's palette, cropped by a named treatment. */
+  image?: { art?: ArtKind; treatment?: string; seed?: number }
   children?: LabNode[]
 }
 
@@ -64,6 +74,8 @@ export interface SystemMeta {
   backdrop: string
   /** Honest note about where the values come from. */
   provenance: string
+  /** Set when the REAL component library exists in this app: designs can then use its actual components. */
+  library?: LibraryId
 }
 
 export interface DesignSystem {
@@ -74,6 +86,8 @@ export interface DesignSystem {
   components: ComponentDef[]
   page: LabNode
   meta?: SystemMeta
+  /** States, icons, fonts, adaptations, overlays and images. Derived by code, optionally chosen by the model. */
+  extras?: LanguageExtras
 }
 
 /* ------------------------------------------------------------------ *
@@ -94,8 +108,8 @@ STAGE 2 — MINT THE TOKENS.
 - "color": 5–9 named colors as raw hex. Mix real pigments from the brief's world — not framework defaults. Name them like a designer ("ink", "bone", "ember", "pool"), not "primary/secondary".
 - "font": font stacks from system-available faces, chosen for personality. Examples of raw material: "Palatino, Iowan Old Style, serif" / "Futura, Avenir Next, 'Century Gothic', sans-serif" / "Georgia, 'Times New Roman', serif" / "'Helvetica Neue', Arial, sans-serif" / "'Courier New', monospace". Keys: at least "display" and "body" (optionally "mono", "accent").
 - "type": a modular scale of named text styles, each {"size","weight","lineHeight","letterSpacing"?} — e.g. display, h2, lead, body, caption, overline. Derive sizes from a ratio you choose; don't just copy 16/24/32.
-- "space": a named spacing rhythm (e.g. xs, sm, md, lg, xl, xxl) in px — pick a base unit and scale it.
-- "radius": named radii that express the language's geometry (sharp 0 / soft / organic / pill).
+- "space": a named spacing rhythm with these exact names: xs, sm, md, lg, xl, xxl. Every value is a STRING WITH UNITS, e.g. {"xs":"4px","sm":"8px","md":"16px","lg":"24px","xl":"40px","xxl":"72px"} — pick a base unit and scale it.
+- "radius": named radii that express the language's geometry, also strings with units, e.g. {"sharp":"0px","soft":"12px","pill":"9999px"}. If the brief says "rounded", use real radii (16px or more on cards and buttons).
 - "shadow": named shadows (or flat "none" values) that express its depth model.
 
 STAGE 3 — COMPONENTS, THEN THE PAGE.
@@ -112,12 +126,16 @@ Page node schema:
   "element": "div" | "button",          // "button" for interactive elements
   "style": { ... },                     // layout scaffolding or sparing instance overrides ($ refs allowed)
   "text": "<string>",                   // leaf text content
+  "icon": "<name>",                     // optional — a glyph: Home, Search, Heart, Star, User, Settings, Bell, Mail, Calendar, MapPin, Camera, ShoppingBag, ArrowRight, Check, Menu, Leaf, Flower2, Sprout, Sun, Moon, Coffee, Music, Plane, Gift, Sparkles… (the set is finalized later)
+  "image": { "treatment": "Hero" | "Card" | "Portrait" | "Square" | "Avatar" | "Wide banner" },  // optional — a picture drawn by the language's own art; use it INSTEAD of empty boxes for photos
   "children": [ ... ]                   // container nodes
 }
 
 CSS RULES:
 - camelCase React style properties (background, color, padding, margin, display, flexDirection, alignItems, justifyContent, gap, gridTemplateColumns, fontFamily, fontSize, fontWeight, lineHeight, letterSpacing, textTransform, borderRadius, boxShadow, border, borderTop, width, maxWidth, height, minHeight, aspectRatio, opacity, overflow, textAlign, flex, flexWrap, alignSelf…). Values are plain CSS strings or numbers.
 - The page root gets the frame background; sections own their padding. Page width is fixed at 1240px by the canvas — a full desktop viewport. Design for that width: multi-column layouts, asymmetric splits, wide grids (gridTemplateColumns with 3–4 tracks), generous horizontal rhythm. Cap text measure with maxWidth so long copy stays readable; place content deliberately inside the width instead of stretching everything edge to edge.
+
+SPACING IS NOT OPTIONAL: every section has vertical and horizontal padding ("$space.xxl $space.xl" or larger); every card has padding ("$space.lg"); every button has padding ("$space.sm $space.lg"), a radius from $radius and cursor pointer; siblings are separated with gap ("$space.md" or more). A design with elements touching each other or the frame edge is a FAILED design.
 
 UX FLOOR (non-negotiable, this is the craft):
 - Text always readably contrasts its background. Body text ≥ 14px with lineHeight ≥ 1.5.
@@ -209,6 +227,35 @@ function lookupToken(tokens: DesignTokens, ref: string): string | number | null 
   return typeof cursor === 'string' || typeof cursor === 'number' ? cursor : null
 }
 
+/** Sensible steps for a name the model used but never defined. */
+const DEFAULT_SPACE: Record<string, string> = { xxs: '2px', xs: '4px', sm: '8px', md: '16px', lg: '24px', xl: '32px', xxl: '48px', '2xl': '48px', '3xl': '64px', xxxl: '64px' }
+const DEFAULT_RADIUS: Record<string, string> = { none: '0px', sharp: '0px', xs: '2px', sm: '4px', md: '8px', lg: '16px', xl: '24px', soft: '12px', round: '9999px', pill: '9999px', full: '9999px' }
+
+const px = (v: string) => (/^-?[\d.]+px$/.test(v) ? parseFloat(v) : null)
+
+/**
+ * A reference to a spacing / radius / font name that was never defined must not delete the
+ * property (that is how a design ends up with no padding and square corners): use the standard
+ * step of that name, or the middle of the scale the model did define.
+ */
+function fallbackToken(tokens: DesignTokens, ref: string): string | null {
+  const [group, key] = ref.slice(1).split('.')
+  if (group === 'space' || group === 'radius') {
+    const defaults = group === 'space' ? DEFAULT_SPACE : DEFAULT_RADIUS
+    if (key in defaults) return defaults[key]
+    const defined = Object.values(tokens[group]).map(px).filter((n): n is number => n !== null).sort((a, b) => a - b)
+    if (group === 'radius') {
+      // the largest ordinary corner, never a pill (a 9999px card becomes a blob)
+      const ordinary = defined.filter((n) => n > 0 && n < 100)
+      return ordinary.length ? `${ordinary[ordinary.length - 1]}px` : DEFAULT_RADIUS.lg
+    }
+    if (defined.length) return `${defined[Math.floor(defined.length / 2)]}px`
+    return DEFAULT_SPACE.md
+  }
+  if (group === 'font') return tokens.font.body ?? tokens.font.display ?? Object.values(tokens.font)[0] ?? null
+  return null
+}
+
 export function resolveStyle(
   decl: StyleDecl | undefined,
   tokens: DesignTokens,
@@ -225,10 +272,11 @@ export function resolveStyle(
     if (typeof value !== 'string' || value.length > 400) continue
     let failed = false
     const resolved = value.replace(REF_RE, (ref) => {
-      const hit = lookupToken(tokens, ref)
+      const direct = lookupToken(tokens, ref)
+      const hit = direct ?? fallbackToken(tokens, ref)
+      if (direct === null) unresolved?.add(ref) // reported to the user even when a standard value is used instead
       if (hit === null) {
         failed = true
-        unresolved?.add(ref)
         return ''
       }
       return String(hit)
@@ -286,23 +334,26 @@ function firstString(...vals: unknown[]): string | undefined {
 }
 
 /** Accepts {name: "value"}, {name: {value|hex: ...}}, or [{name, value|hex}] shapes. */
-function coerceStringMap(v: unknown): Record<string, string> {
+function coerceStringMap(v: unknown, lengths = false): Record<string, string> {
   const out: Record<string, string> = {}
+  /** Small models write 16 (or "16") for a spacing or radius step: that is 16px, and bare numbers are invalid CSS in a string. */
+  const unit = (s: string) => (lengths && /^-?\d+(\.\d+)?$/.test(s.trim()) ? `${s.trim()}px` : s)
   if (Array.isArray(v)) {
     for (const item of v) {
       const r = asRecord(item)
       const name = firstString(r.name, r.key, r.id)
       const val = firstString(r.value, r.hex, r.color, r.stack)
-      if (name && val) out[name] = val
+      if (name && val) out[name] = unit(val)
     }
     return out
   }
   for (const [k, val] of Object.entries(asRecord(v))) {
-    if (typeof val === 'string' && val.length < 300) out[k] = val
+    if (typeof val === 'number' && Number.isFinite(val)) out[k] = unit(String(val))
+    else if (typeof val === 'string' && val.length < 300) out[k] = unit(val)
     else {
       const r = asRecord(val)
       const s = firstString(r.value, r.hex, r.color, r.stack)
-      if (s) out[k] = s
+      if (s) out[k] = unit(s)
     }
   }
   return out
@@ -376,6 +427,15 @@ function coerceNodeTree(
     if (style) node.style = style
     const text = pick(n, 'text', 'content')
     if (typeof text === 'string') node.text = text
+    if (isIconName(n.icon)) node.icon = n.icon
+    const img = asRecord(n.image)
+    if (Object.keys(img).length) {
+      node.image = {
+        ...(ART_KINDS.includes(img.art as ArtKind) ? { art: img.art as ArtKind } : {}),
+        ...(typeof img.treatment === 'string' ? { treatment: img.treatment.slice(0, 40) } : {}),
+        ...(typeof img.seed === 'number' ? { seed: Math.abs(Math.round(img.seed)) % 9999 } : {}),
+      }
+    } else if (n.image === true) node.image = {}
     const rawChildren = pick(n, 'children', 'nodes', 'items')
     if (Array.isArray(rawChildren)) {
       const children = rawChildren.map((c) => coerceNode(c, depth + 1)).filter((c): c is LabNode => c !== null)
@@ -400,6 +460,139 @@ function collectUnresolved(system: DesignSystem): Set<string> {
     Object.values(c.variants ?? {}).forEach((v) => resolveStyle(v, system.tokens, unresolved))
   })
   return unresolved
+}
+
+/* ------------------------------------------------------------------ *
+ *  Quality pass — the craft rules the prompt asks for, checked in code
+ *  (small models ignore the prompt: pale text on pale cards, bare buttons)
+ * ------------------------------------------------------------------ */
+
+type RGBA = [number, number, number, number]
+
+/** #rgb, #rrggbb, #rrggbbaa, rgb(), rgba(). Anything else (names, hsl, var) is unknown. */
+function parseColor(css: string): RGBA | null {
+  const s = css.trim().toLowerCase()
+  const hex = /^#([0-9a-f]{3,8})$/.exec(s)
+  if (hex) {
+    let h = hex[1]
+    if (h.length === 3 || h.length === 4) h = [...h].map((c) => c + c).join('')
+    if (h.length !== 6 && h.length !== 8) return null
+    const n = (i: number) => parseInt(h.slice(i, i + 2), 16)
+    return [n(0), n(2), n(4), h.length === 8 ? n(6) / 255 : 1]
+  }
+  const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+%?))?\s*\)$/.exec(s)
+  if (rgb) {
+    const a = rgb[4] === undefined ? 1 : rgb[4].endsWith('%') ? parseFloat(rgb[4]) / 100 : parseFloat(rgb[4])
+    return [+rgb[1], +rgb[2], +rgb[3], a]
+  }
+  return null
+}
+
+/** Every color found inside a CSS value (a plain color, or the stops of a gradient). */
+function colorsIn(value: unknown): RGBA[] {
+  if (typeof value !== 'string') return []
+  const found = value.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g) ?? []
+  return found.map(parseColor).filter((c): c is RGBA => c !== null)
+}
+
+const over = (top: RGBA, base: RGBA): RGBA => [
+  top[0] * top[3] + base[0] * (1 - top[3]),
+  top[1] * top[3] + base[1] * (1 - top[3]),
+  top[2] * top[3] + base[2] * (1 - top[3]),
+  1,
+]
+
+function luminance([r, g, b]: RGBA): number {
+  const lin = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+
+export function contrastRatio(a: RGBA, b: RGBA): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/** Below this, body copy is hard to read. (WCAG AA asks 4.5 for small text, 3 for large.) */
+const MIN_CONTRAST = 3.5
+
+const hexOf = ([r, g, b]: RGBA) => `#${[r, g, b].map((c) => Math.round(c).toString(16).padStart(2, '0')).join('')}`
+
+/**
+ * Fixes text that cannot be read and buttons that look flat. Works on the page tree only
+ * (component recipes stay as designed). Returns what it changed, for the warnings list.
+ */
+export function repairDesign(system: DesignSystem): { contrast: number; buttons: number } {
+  const palette = Object.entries(system.tokens.color)
+    .map(([name, value]) => ({ name, rgb: parseColor(value) }))
+    .filter((c): c is { name: string; rgb: RGBA } => c.rgb !== null && c.rgb[3] === 1)
+  const black: RGBA = [17, 17, 17, 1]
+  const white: RGBA = [255, 255, 255, 1]
+  let contrast = 0
+  let buttons = 0
+  let stretched = 0
+
+  const walk = (node: LabNode, parentBg: RGBA, parentColor: RGBA, parentStyle: Record<string, unknown> = {}) => {
+    const style = nodeStyle(node, system) as Record<string, unknown>
+    // background: the average of a gradient's stops, blended over what is behind it
+    const stops = colorsIn(style.background ?? style.backgroundColor)
+    let bg = parentBg
+    if (stops.length) {
+      const avg = stops.reduce<RGBA>(
+        (acc, c) => [acc[0] + c[0] / stops.length, acc[1] + c[1] / stops.length, acc[2] + c[2] / stops.length, acc[3] + c[3] / stops.length],
+        [0, 0, 0, 0],
+      )
+      bg = over(avg, parentBg)
+    }
+    let color = colorsIn(style.color)[0] ?? parentColor
+    if (color[3] < 1) color = over(color, bg)
+
+    if (node.text?.trim()) {
+      const ratio = contrastRatio(color, bg)
+      if (ratio < MIN_CONTRAST) {
+        // Prefer a palette TOKEN (it follows the language into its dark theme); a literal color cannot adapt.
+        const rank = (options: Array<{ ref: string; rgb: RGBA }>) => options.map((o) => ({ ...o, ratio: contrastRatio(o.rgb, bg) })).sort((a, b) => b.ratio - a.ratio)[0]
+        const tokens = rank(palette.map((p) => ({ ref: `$color.${p.name}`, rgb: p.rgb })))
+        const best = tokens && tokens.ratio >= 4.5 ? tokens : rank([...palette.map((p) => ({ ref: `$color.${p.name}`, rgb: p.rgb })), { ref: hexOf(black), rgb: black }, { ref: hexOf(white), rgb: white }])
+        if (best && best.ratio > ratio + 1) {
+          node.style = { ...node.style, color: best.ref }
+          color = best.rgb
+          contrast++
+        }
+      }
+    }
+
+    const isButton = node.element === 'button' || /button|cta/i.test(node.component ?? '')
+    if (isButton && node.text?.trim() && !Object.keys(style).some((k) => k.startsWith('padding'))) {
+      node.style = { ...node.style, padding: '$space.sm $space.md', cursor: 'pointer' }
+      buttons++
+    }
+    // a button or tag inside a stretching column would run edge to edge: give it its natural width
+    const isChip = /tag|badge|chip|pill/i.test(node.component ?? '')
+    if (
+      (isButton || isChip) &&
+      parentStyle.flexDirection === 'column' &&
+      (parentStyle.alignItems === undefined || parentStyle.alignItems === 'stretch') &&
+      !('alignSelf' in style) &&
+      !('width' in style) &&
+      !('flex' in style)
+    ) {
+      node.style = { ...node.style, alignSelf: 'flex-start' }
+      stretched++
+    }
+
+    node.children?.forEach((c) => walk(c, bg, color, style))
+  }
+  walk(system.page, white, black)
+  return { contrast, buttons: buttons + stretched }
+}
+
+/** Adds one warning line per kind of repair. */
+function noteRepairs(warnings: string[], fixed: { contrast: number; buttons: number }) {
+  if (fixed.contrast) warnings.push(`fixed low-contrast text on ${fixed.contrast} node${fixed.contrast === 1 ? '' : 's'} (used the best color from the palette)`)
+  if (fixed.buttons) warnings.push(`gave padding to ${fixed.buttons} bare button${fixed.buttons === 1 ? '' : 's'}`)
 }
 
 export function validateDesignSystem(raw: unknown): LabResult {
@@ -431,8 +624,8 @@ export function validateDesignSystem(raw: unknown): LabResult {
     color: coerceStringMap(pick(rawTokens, 'color', 'colors', 'palette')),
     font: coerceStringMap(pick(rawTokens, 'font', 'fonts', 'fontFamilies', 'fontFamily')),
     type,
-    space: coerceStringMap(pick(rawTokens, 'space', 'spacing', 'spaces')),
-    radius: coerceStringMap(pick(rawTokens, 'radius', 'radii', 'borderRadius', 'corners')),
+    space: coerceStringMap(pick(rawTokens, 'space', 'spacing', 'spaces'), true),
+    radius: coerceStringMap(pick(rawTokens, 'radius', 'radii', 'borderRadius', 'corners'), true),
     shadow: coerceStringMap(pick(rawTokens, 'shadow', 'shadows', 'elevation', 'depth')),
   }
   if (Object.keys(tokens.color).length === 0) {
@@ -459,9 +652,10 @@ export function validateDesignSystem(raw: unknown): LabResult {
     page: tree.page,
   }
 
+  noteRepairs(warnings, repairDesign(system))
   const unresolved = collectUnresolved(system)
   if (unresolved.size > 0) {
-    warnings.push(`unresolved token refs dropped: ${[...unresolved].slice(0, 5).join(', ')}${unresolved.size > 5 ? '…' : ''}`)
+    warnings.push(`the model used names it never defined: ${[...unresolved].slice(0, 5).join(', ')}${unresolved.size > 5 ? '…' : ''} — standard values were used for spacing, radius and font`)
   }
   return { system, warnings, nodeCount: tree.count }
 }
@@ -484,9 +678,10 @@ export function validateComposition(raw: unknown, base: DesignSystem): LabResult
     components: [...base.components, ...extras],
     page: tree.page,
   }
+  noteRepairs(warnings, repairDesign(system))
   const unresolved = collectUnresolved(system)
   if (unresolved.size > 0) {
-    warnings.push(`unresolved token refs dropped: ${[...unresolved].slice(0, 5).join(', ')}${unresolved.size > 5 ? '…' : ''}`)
+    warnings.push(`the model used names it never defined: ${[...unresolved].slice(0, 5).join(', ')}${unresolved.size > 5 ? '…' : ''} — standard values were used for spacing, radius and font`)
   }
   return { system, warnings, nodeCount: tree.count, newComponents: extras.length }
 }
@@ -519,6 +714,20 @@ export async function generateWithStyle(
     onRepair,
     onPartial,
   )
+}
+
+/**
+ * The second pass: the model chooses fonts, icons, states, a dark theme, text adaptations, overlays and
+ * image treatments for a finished language. Everything is validated and merged over the derived defaults,
+ * so a failed or partial answer never leaves the language incomplete.
+ */
+export async function generateExtras(
+  config: AIConfig,
+  system: DesignSystem,
+  brief: string,
+): Promise<{ system: DesignSystem; used: string[]; ignored: string[] }> {
+  const text = await callModel(config, extrasSystemPrompt(), extrasUserPrompt(system, brief))
+  return mergeModelExtras(system, parseModelJson(text))
 }
 
 /* ------------------------------------------------------------------ *
@@ -624,7 +833,18 @@ export function tokensToCss(system: DesignSystem): string {
   group('space', 'space', system.tokens.space)
   group('radius', 'radius', system.tokens.radius)
   group('shadow', 'shadow', system.tokens.shadow)
-  return `:root {\n${lines.join('\n')}\n}`
+  const ex = system.extras
+  if (ex) {
+    lines.push('  /* overlay */')
+    lines.push(`  --scrim: ${ex.overlay.scrim};`, `  --scrim-blur: ${ex.overlay.blur};`, `  --overlay-motion: ${ex.overlay.motion};`)
+  }
+  const fonts = ex ? googleFontsHref(ex.fonts) : null
+  let css = `:root {\n${lines.join('\n')}\n}`
+  if (ex && Object.keys(ex.themes.dark).length) {
+    const dark = Object.entries(ex.themes.dark).map(([k, v]) => `  --color-${kebab(k)}: ${v};`)
+    css += `\n\n/* Color adaptation: the dark theme. Set data-theme="dark" on <html>. */\n[data-theme='dark'] {\n${dark.join('\n')}\n}`
+  }
+  return fonts ? `@import url("${fonts}");\n\n${css}` : css
 }
 
 export function componentToCss(component: ComponentDef): string {
@@ -632,6 +852,19 @@ export function componentToCss(component: ComponentDef): string {
   const blocks = [`.${cls} {\n${declToCss(component.base)}\n}`]
   for (const [name, decl] of Object.entries(component.variants ?? {})) {
     blocks.push(`.${cls}--${kebab(name)} {\n${declToCss(decl)}\n}`)
+  }
+  // states: real CSS selectors for the ones that have one, a modifier class for the rest
+  const selectors: Record<string, string> = {
+    hover: `.${cls}:hover`,
+    focus: `.${cls}:focus-visible`,
+    active: `.${cls}:active`,
+    disabled: `.${cls}:disabled,\n.${cls}[aria-disabled='true']`,
+    loading: `.${cls}[aria-busy='true']`,
+    error: `.${cls}[aria-invalid='true']`,
+    selected: `.${cls}[aria-selected='true'],\n.${cls}.is-selected`,
+  }
+  for (const [name, decl] of Object.entries(component.states ?? {})) {
+    blocks.push(`${selectors[name] ?? `.${cls}--${kebab(name)}`} {\n${declToCss(decl)}\n}`)
   }
   return blocks.join('\n\n')
 }

@@ -5,8 +5,20 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Paper Design — AI Canvas</title>
+    <!-- Theme before first paint: no dark flash in light mode. Keep in sync with src/theme.ts and index.css. -->
+    <script>
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem('canvas-agent-theme') === 'light' ? 'light' : 'dark'
+      } catch (e) {
+        document.documentElement.dataset.theme = 'dark'
+      }
+    </script>
+    <style>
+      html { background: #09090b; }
+      html[data-theme='light'] { background: #f7f3ea; }
+    </style>
   </head>
-  <body style="background: #09090b">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

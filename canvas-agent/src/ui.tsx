@@ -1,5 +1,8 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { Moon, Sun } from 'lucide-react'
+import { applyTheme, getTheme, type Theme } from './theme'
 import { motion } from 'framer-motion'
+import type { ErrorReport } from './ai'
 
 /* Shared UI atoms for both canvas pages. */
 
@@ -234,10 +237,85 @@ export function AgentCursor({
   )
 }
 
+/** A failed generation, in plain words, with the raw provider message underneath. */
+export function AgentError({
+  report,
+  onRetry,
+  onSettings,
+  onDismiss,
+}: {
+  report: ErrorReport
+  onRetry: () => void
+  onSettings: () => void
+  onDismiss: () => void
+}) {
+  return (
+    <div role="alert" className="flex max-w-[1200px] flex-col gap-2.5 rounded-xl border border-rose-500/40 bg-rose-950/40 px-5 py-4 text-left">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 text-rose-400">✗</span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <p className="text-[13px] font-semibold text-rose-200">{report.title}</p>
+          <p className="text-[12px] leading-relaxed text-zinc-300">{report.hint}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss error"
+          className="rounded-md px-1.5 text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-200"
+        >
+          ✕
+        </button>
+      </div>
+      <pre className="thin-scroll max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/40 px-3 py-2 font-mono text-[10.5px] leading-relaxed text-rose-300/90">
+        {report.detail}
+      </pre>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-lg bg-rose-600 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-rose-500"
+        >
+          Try again
+        </button>
+        <button
+          type="button"
+          onClick={onSettings}
+          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-[12px] text-zinc-300 transition-colors hover:bg-zinc-900"
+        >
+          Model settings
+        </button>
+        <span className="ml-auto font-mono text-[10px] text-zinc-500">full trace: browser console · dev terminal</span>
+      </div>
+    </div>
+  )
+}
+
+/** Switches the whole app between dark and light (cream). */
+export function ThemeToggle({ className = '' }: { className?: string }) {
+  const [theme, setTheme] = useState<Theme>(getTheme)
+  const next: Theme = theme === 'dark' ? 'light' : 'dark'
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        applyTheme(next)
+        setTheme(next)
+      }}
+      title={`Switch to ${next} mode`}
+      aria-label={`Switch to ${next} mode`}
+      className={`flex size-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${className}`}
+    >
+      {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+    </button>
+  )
+}
+
 export interface AgentStep {
   id: number
   label: string
   state: 'active' | 'done' | 'error'
+  /** Live detail on the active step: elapsed time, chars received, … */
+  note?: string
 }
 
 let stepSeq = 0
@@ -275,7 +353,10 @@ export function AgentFeed({ instruction, steps, doneSummary, running, emptyHint 
                     <span className="pt-1">
                       <DotSpinner />
                     </span>
-                    <span className="text-amber-300">{step.label}…</span>
+                    <span className="min-w-0 break-words text-amber-300">
+                      {step.label}…
+                      {step.note && <span className="ml-1.5 text-zinc-500">{step.note}</span>}
+                    </span>
                   </>
                 ) : step.state === 'error' ? (
                   <>

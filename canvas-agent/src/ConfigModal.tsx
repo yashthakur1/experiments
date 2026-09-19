@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PROVIDERS, commitProfile, defaultModel, providerMeta, switchProvider, type AIConfig } from './ai'
+import { EFFORTS, PROVIDERS, commitProfile, defaultModel, providerHasEffort, providerMeta, switchProvider, type AIConfig } from './ai'
 
 interface ConfigModalProps {
   config: AIConfig
@@ -84,6 +84,26 @@ export function ConfigModal({ config, onSave, onClose }: ConfigModalProps) {
             />
           )}
         </div>
+
+        {providerHasEffort(draft.provider) && (
+          <label className="flex flex-col gap-1.5">
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">Thinking effort</span>
+            <select
+              value={draft.effort}
+              onChange={(e) => setDraft({ ...draft, effort: e.target.value as AIConfig['effort'] })}
+              className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-[13px] text-zinc-200 outline-none focus:border-blue-500"
+            >
+              {EFFORTS.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.label}
+                </option>
+              ))}
+            </select>
+            <span className="text-[11px] leading-relaxed text-zinc-500">
+              {EFFORTS.find((e) => e.id === draft.effort)?.hint} Applies to Claude, GPT and other reasoning models.
+            </span>
+          </label>
+        )}
 
         <label className="flex flex-col gap-1.5">
           <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">API key</span>

@@ -1,13 +1,17 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { generateLayout, providerMeta, resolvedModel, type AIConfig, type CanvasNode, type ValidationResult } from './ai'
+import { abortActiveCalls, componentStats, explainError, generateLayout, providerMeta, resolvedModel, type AIConfig, type CanvasNode, type ErrorReport, type ValidationResult } from './ai'
+import { subscribeLog } from './log'
 import { paletteOf, vocabularyStyleDirective, type SavedStyle } from './lab'
 import type { CanvasState } from './projects'
 import { countTree, findById, insertChild, lastNodeId, patchNode, sleep } from './tree'
-import { AgentActivityDots, AgentCursor, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
+import { HandoverPanel } from './HandoverPanel'
+import { RealNodeView } from './realui/components'
+import { getLibrary, type LibraryId } from './realui/catalog'
+import { AgentActivityDots, AgentCursor, AgentError, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
 
 /* ================================================================== *
- *  Page 1 — Vocabulary canvas: the model designs inside a safelisted
+ *  Page 1 — Handover design (the vocabulary canvas): the model designs inside a safelisted
  *  Tailwind vocabulary; output is validated, sanitized, and streamed
  *  onto the artboard node by node.
  * ================================================================== */
@@ -52,6 +56,8 @@ function compileOps(frame: CanvasNode, sections: CanvasNode[]): WriteOp[] {
  * ------------------------------------------------------------------ */
 
 interface RendererProps {
+  /** The real component library this tree renders with, if any. */
+  library: LibraryId | null
   node: CanvasNode
   activeNodeId: string | null
   hoverNodeId: string | null
@@ -106,6 +112,18 @@ function CanvasRenderer(props: RendererProps) {
   )
 
   const children = node.children?.map((child) => <CanvasRenderer key={child.id} {...props} node={child} />)
+
+  if (node.type === 'component' && props.library) {
+    return (
+      <RealNodeView
+        node={node}
+        library={props.library}
+        ringClass={ring}
+        handlers={{ onClick: shared.onClick, onMouseOver: shared.onMouseOver, onMouseOut: shared.onMouseOut }}
+        kids={children ?? []}
+      />
+    )
+  }
 
   switch (node.type) {
     case 'button':
@@ -173,6 +191,9 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null)
   const runIdRef = useRef(0)
   const artboardRef = useRef<HTMLDivElement>(null)
+  const [handoverOpen, setHandoverOpen] = useState(false)
+  const [error, setError] = useState<ErrorReport | null>(null)
+  const runningRef = useRef(false)
 
   const selectedStyle = styleId ? (styles.find((s) => s.id === styleId) ?? null) : null
 
@@ -183,12 +204,32 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
     ])
   }, [])
 
+  // live detail on the active step (elapsed, chars received…)
+  const tickStatus = useCallback((note: string) => {
+    setSteps((prev) => (prev.some((s) => s.state === 'active') ? prev.map((s) => (s.state === 'active' ? { ...s, note } : s)) : prev))
+  }, [])
+
   const failStatus = useCallback((label: string) => {
     setSteps((prev) => [
       ...prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' as const } : s)),
       { id: nextStepId(), label, state: 'error' },
     ])
   }, [])
+
+  useEffect(() => {
+    runningRef.current = running
+  }, [running])
+
+  // Both canvases stay mounted, so only the one that is running listens.
+  useEffect(
+    () =>
+      subscribeLog((entry) => {
+        if (!runningRef.current || !entry.ui) return
+        if (entry.ui === 'tick') tickStatus(entry.msg)
+        else pushStatus(`${entry.level === 'warn' ? '⚠ ' : ''}${entry.msg}`)
+      }),
+    [pushStatus, tickStatus],
+  )
 
   const runPrompt = useCallback(
     async (userPrompt: string) => {
@@ -207,20 +248,26 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
       setDoneSummary(null)
       setInstruction(trimmed)
       setSteps([])
+      setError(null)
+      setHandoverOpen(false)
       const started = performance.now()
       const model = resolvedModel(config)
       const styled = styleId ? (styles.find((s) => s.id === styleId) ?? null) : null
 
+      const lib = getLibrary(styled?.system.meta?.library)
       pushStatus(
-        `Contacting ${providerMeta(config.provider).label.split(' ')[0].toLowerCase()} · ${model}${styled ? ` — styled by “${styled.system.name}”` : ''}`,
+        `Contacting ${providerMeta(config.provider).label.split(' ')[0].toLowerCase()} · ${model}${
+          lib ? ` — composing with the real ${lib.label} components` : styled ? ` — approximating “${styled.system.name}” with Tailwind` : ''
+        }`,
       )
 
       const toTree = (v: ValidationResult): CanvasNode => ({
         id: 'root',
         type: 'container',
         label: v.layout.frameLabel,
-        classes: `flex flex-col w-[1200px] rounded-xl overflow-hidden shadow-2xl ${v.layout.frameClasses}`,
+        classes: `flex flex-col w-[1200px] rounded-xl overflow-hidden shadow-2xl ${lib ? `${lib.scopeClass} ` : ''}${v.layout.frameClasses}`,
         children: v.layout.sections,
+        ...(lib ? { library: lib.id } : {}),
       })
 
       let streamed = false
@@ -232,7 +279,8 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
           (msg) => {
             if (runIdRef.current === myRun) pushStatus(msg)
           },
-          styled ? vocabularyStyleDirective(styled.system) : undefined,
+          // real components carry their own theme; only imitations need the token directive
+          styled && !lib ? vocabularyStyleDirective(styled.system) : undefined,
           (partial) => {
             // live: render each streamed snapshot the moment it parses
             if (runIdRef.current !== myRun) return
@@ -244,15 +292,20 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
             setTree(t)
             setBuildingNodeId(lastNodeId(t))
           },
+          lib?.id,
         )
       } catch (err) {
         if (runIdRef.current !== myRun) return
         failStatus(`Generation failed — ${err instanceof Error ? err.message : String(err)}`)
+        setError(explainError(config, err))
+        setBuildingNodeId(null)
         setRunning(false)
         onPersist({ tree: null, instruction: trimmed, doneSummary: null })
         return
       }
       if (runIdRef.current !== myRun) return
+
+      for (const w of result.warnings) pushStatus(`⚠ ${w}`)
 
       if (result.droppedClasses.length > 0) {
         pushStatus(
@@ -297,16 +350,31 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
       const total = finalTree ? countTree(finalTree) : 0
       setBuildingNodeId(null)
       setSteps((prev) => prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' } : s)))
-      const summary = `Done — ${total} nodes · ${model} · ${secs}s${streamed ? ' · streamed live' : ''}`
+      const stats = finalTree ? componentStats(finalTree) : { components: 0, total: 0 }
+      if (lib && stats.components < 8) {
+        pushStatus(`⚠ Only ${stats.components} real ${lib.label} component${stats.components === 1 ? '' : 's'} in ${stats.total} nodes — the model drew most of it as plain blocks. Try again or pick a stronger model.`)
+      }
+      const summary = `Done — ${total} nodes${lib ? ` (${stats.components} real ${lib.label} components)` : ''} · ${model} · ${secs}s${streamed ? ' · streamed live' : ''}`
       setDoneSummary(summary)
       setRunning(false)
+      setHandoverOpen(true)
       onPersist({ tree: finalTree, instruction: trimmed, doneSummary: summary })
     },
     [config, running, openConfig, pushStatus, failStatus, styleId, styles, onPersist],
   )
 
+  const stopRun = useCallback(() => {
+    ++runIdRef.current // must come first: the aborted call's catch checks it
+    abortActiveCalls()
+    setRunning(false)
+    setBuildingNodeId(null)
+    failStatus('Stopped by you')
+  }, [failStatus])
+
   const clearCanvas = useCallback(() => {
     ++runIdRef.current
+    setError(null)
+    setHandoverOpen(false)
     setRunning(false)
     setTree(null)
     setInstruction(null)
@@ -332,7 +400,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
             <span className={`relative inline-flex size-2 rounded-full ${running ? 'bg-amber-400' : 'bg-emerald-400'}`} />
           </span>
           <div className="flex min-w-0 flex-1 flex-col">
-            <h1 className="text-[13px] font-semibold tracking-tight">Canvas Agent · Vocabulary</h1>
+            <h1 className="text-[13px] font-semibold tracking-tight">Canvas Agent · Handover design</h1>
             <p className="truncate font-mono text-[10px] text-zinc-500">
               {running ? 'generating…' : config.apiKey ? `${meta.label.split(' ')[0].toLowerCase()} · ${resolvedModel(config) || 'no model'}` : 'no provider configured'}
             </p>
@@ -363,7 +431,11 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-[12px] font-medium text-zinc-200">{selectedStyle ? selectedStyle.system.name : 'Free design'}</span>
               <span className="truncate font-mono text-[9.5px] text-zinc-500">
-                {selectedStyle ? 'translated into the Tailwind vocabulary' : 'no design system'}
+                {selectedStyle
+                  ? selectedStyle.system.meta?.library
+                    ? `real ${getLibrary(selectedStyle.system.meta.library)?.label} components`
+                    : 'approximated with Tailwind, not real components'
+                  : 'no design system'}
               </span>
             </span>
             <span className="font-mono text-[10px] text-zinc-500">change ▾</span>
@@ -396,6 +468,15 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
               <>✦ Generate on canvas</>
             )}
           </button>
+          {running && (
+            <button
+              type="button"
+              onClick={stopRun}
+              className="rounded-lg border border-rose-500/40 px-3.5 py-2 text-[12px] font-medium text-rose-300 transition-colors hover:bg-rose-950/40"
+            >
+              ■ Stop
+            </button>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {EXAMPLE_PROMPTS.map((p) => (
               <button
@@ -428,26 +509,8 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
             steps={steps}
             doneSummary={doneSummary}
             running={running}
-            emptyHint="Type an instruction (or pick an example) and the model will design a layout live on the canvas — constrained to the Tailwind vocabulary."
+            emptyHint="Type an instruction (or pick an example) and the model will design a layout live on the canvas — using ready-made Tailwind styles, or the real components of a selected style like shadcn/ui or Relume."
           />
-        </div>
-
-        {/* Selection inspector */}
-        <div className="flex h-52 shrink-0 flex-col border-t border-zinc-800/80">
-          <p className="px-5 pt-3 pb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">Selection · AST slice</p>
-          <div className="thin-scroll mx-4 mb-3 min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-800/80 bg-zinc-900/50">
-            {activeNode ? (
-              <pre className="p-3 font-mono text-[10.5px] leading-relaxed text-sky-300/90">{JSON.stringify(activeNode, null, 2)}</pre>
-            ) : (
-              <p className="p-3 text-[11px] leading-relaxed text-zinc-600">
-                {tree === null
-                  ? 'The canvas is empty — nothing to inspect yet.'
-                  : running
-                    ? 'Selection unlocks when the agent finishes writing.'
-                    : 'Click any node on the canvas to inspect its raw JSON slice.'}
-              </p>
-            )}
-          </div>
         </div>
       </aside>
 
@@ -469,17 +532,34 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
           <span className="ml-auto truncate font-mono text-[10px] text-zinc-600">
             {activeNode ? activeNode.label : instruction ?? 'no instruction yet'}
           </span>
+          {tree !== null && !running && (
+            <button
+              type="button"
+              onClick={() => setHandoverOpen((v) => !v)}
+              aria-pressed={handoverOpen}
+              className={`shrink-0 rounded-lg border px-2.5 py-1 font-mono text-[11px] transition-colors ${
+                handoverOpen ? 'border-fuchsia-500/60 bg-fuchsia-500/10 text-fuchsia-200' : 'border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+              }`}
+            >
+              Handover
+            </button>
+          )}
         </header>
 
         <div className="canvas-backdrop thin-scroll relative flex-1 overflow-auto bg-zinc-900" onClick={() => setActiveNodeId(null)}>
-          <div className="flex min-h-full items-start justify-center px-10 pt-24 pb-16">
-            <div ref={artboardRef} className="relative">
+          <div className="flex min-h-full items-start px-10 pt-24 pb-16">
+            <div ref={artboardRef} className="relative mx-auto">
               <AgentCursor
                 containerRef={artboardRef}
                 targetId={buildingNodeId}
                 active={running}
                 name={providerMeta(config.provider).label.split(' ')[0]}
               />
+              {error && !running && (
+                <div className="mb-4">
+                  <AgentError report={error} onRetry={() => runPrompt(instruction ?? prompt)} onSettings={openConfig} onDismiss={() => setError(null)} />
+                </div>
+              )}
               {running && (
                 <div className="absolute -top-11 right-0 z-30">
                   <AgentActivityDots accent="bg-fuchsia-500" label={steps.find((s) => s.state === 'active')?.label} />
@@ -502,20 +582,31 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
                   )}
                 </div>
               ) : (
+                <div className="design-surface contents">
                 <CanvasRenderer
                   node={tree}
+                  library={tree.library ?? null}
                   activeNodeId={activeNodeId}
                   hoverNodeId={hoverNodeId}
                   buildingNodeId={buildingNodeId}
                   interactive={interactive}
-                  onSelect={setActiveNodeId}
+                  onSelect={(id) => {
+                    setActiveNodeId(id)
+                    setHandoverOpen(true)
+                  }}
                   onHover={setHoverNodeId}
                 />
+                </div>
               )}
             </div>
           </div>
         </div>
       </main>
+
+      {/* ============ Handover panel ============ */}
+      {handoverOpen && tree !== null && !running && (
+        <HandoverPanel tree={tree} selected={activeNode} artboard={artboardRef} onClose={() => setHandoverOpen(false)} />
+      )}
     </div>
   )
 }

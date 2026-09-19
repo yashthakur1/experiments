@@ -305,7 +305,8 @@ const shadcn: DesignSystem = {
     install: 'npx shadcn@latest init',
     docs: 'https://ui.shadcn.com/docs',
     backdrop: 'linear-gradient(135deg,#f4f5f6 0%,#e4e7ea 100%)',
-    provenance: 'Official new-york-v4 dark theme: OKLCH values converted to hex; radius scale 0.625rem × (0.6, 0.8, 1, 1.4).',
+    provenance: 'Official new-york-v4 dark theme: OKLCH values converted to hex; radius scale 0.625rem × (0.6, 0.8, 1, 1.4). Real shadcn/ui components are installed in this app.',
+    library: 'shadcn',
   },
   tokens: {
     color: {
@@ -1222,12 +1223,221 @@ const nitro: DesignSystem = {
   }),
 }
 
+
+/* ================================================================== *
+ *  Relume  (light, black & white)
+ *  Tokens: @relume_io/relume-tailwind 1.3.0 (colors, type scale, shadows).
+ *  Classes: @relume_io/relume-ui 1.3.1 (Button, Badge, Input, Accordion).
+ *  Relume UI has no Card, Alert or Avatar; those recipes follow how
+ *  Relume's own sections build them (bordered blocks, 1px black lines).
+ * ================================================================== */
+
+const relume: DesignSystem = {
+  name: 'Relume',
+  philosophy:
+    'Wireframe clarity. Black on white, one-pixel black lines, square corners. Structure comes from spacing and type size, not from color or shadow.',
+  experienceNotes: [
+    'Black and white only. Light grey (#eeeeee) alternates sections; one solid black band adds contrast.',
+    'Square corners everywhere. Only badges are pills.',
+    'Borders are 1px black. Blocks are outlines, not shadows.',
+    'Buttons: primary is solid black, secondary is outlined, tertiary and link are plain text. Padding is 24 × 12.',
+    'Sections breathe: 5% side padding, 64–112px vertical padding, content capped at 1280px.',
+    'Headings are bold with tight line height (1.2); body is 16px at 1.5.',
+  ],
+  meta: {
+    tagline: 'Relume UI + Tailwind preset',
+    stack: 'React · Tailwind · Radix UI',
+    install: 'npm i @relume_io/relume-ui @relume_io/relume-tailwind',
+    docs: 'https://react-docs.relume.io/',
+    backdrop: 'linear-gradient(135deg,#ffffff 0%,#eeeeee 100%)',
+    provenance:
+      'Tokens read from @relume_io/relume-tailwind 1.3.0 and classes from @relume_io/relume-ui 1.3.1. The preset defines no font, so the system sans stack is used. Real Relume UI components are installed in this app.',
+    library: 'relume',
+  },
+  tokens: {
+    color: {
+      background: '#ffffff',
+      card: '#ffffff',
+      primary: '#000000',
+      foreground: '#000000',
+      sidebar: '#eeeeee',
+      muted: '#eeeeee',
+      mutedForeground: '#666666',
+      border: '#000000',
+      input: '#000000',
+      primaryForeground: '#ffffff',
+      secondary: '#ffffff',
+      secondaryForeground: '#000000',
+      accent: '#eeeeee',
+      destructive: '#b42318',
+      destructiveText: '#b42318',
+      success: '#027a48',
+      successSoft: '#ecfdf3',
+      successText: '#027a48',
+      successBorder: '#027a48',
+      ring: '#000000',
+    },
+    font: {
+      display: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+      body: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+      mono: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    },
+    type: {
+      h1: ty(56, 700, 1.2),
+      h2: ty(40, 700, 1.2),
+      h3: ty(24, 700, 1.4),
+      body: ty(16, 400, 1.5),
+      small: ty(14, 400, 1.5),
+      caption: ty(12, 400, 1.5),
+      overline: ty(14, 600, 1.5),
+      stat: ty(40, 700, 1.2),
+    },
+    space: SPACE,
+    radius: { sm: '0px', md: '0px', lg: '0px', xl: '0px', full: '9999px' },
+    shadow: {
+      none: 'none',
+      xs: '0px 1px 2px rgba(0, 0, 0, 0.05)',
+      sm: '0px 1px 3px rgba(0, 0, 0, 0.1), 0px 1px 2px rgba(0, 0, 0, 0.06)',
+      md: '0px 4px 8px -2px rgba(0, 0, 0, 0.1), 0px 2px 4px -2px rgba(0, 0, 0, 0.06)',
+      ring: '0 0 0 2px #000000',
+    },
+  },
+  components: [
+    ...typography(),
+    comp(
+      'Button',
+      'Every clickable action',
+      'px-6 py-3, gap-3, square corners, 1px border. primary = black fill; secondary = white with black border; tertiary/link = text only.',
+      'Request rover',
+      {
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '12px $space.lg', borderRadius: '$radius.md',
+        border: '1px solid $color.border', background: '$color.primary', color: '$color.primaryForeground', ...tstyle('body'), lineHeight: 1.5,
+        whiteSpace: 'nowrap', cursor: 'pointer',
+      },
+      {
+        secondary: { background: '$color.secondary', color: '$color.secondaryForeground' },
+        outline: { background: '$color.secondary', color: '$color.secondaryForeground' },
+        ghost: { background: 'transparent', border: '1px solid transparent', color: '$color.foreground' },
+        destructive: { background: '$color.secondary', border: '1px solid $color.destructive', color: '$color.destructiveText' },
+        link: { background: 'transparent', border: '0', padding: '0', textDecoration: 'underline' },
+        sm: { padding: '8px 20px' },
+      },
+      `import { Button } from "@relume_io/relume-ui"\n\n<Button variant="primary">Request rover</Button>\n<Button variant="secondary">View missions</Button>\n<Button variant="tertiary">Details</Button>\n<Button variant="link" size="link">Learn more</Button>`,
+    ),
+    comp(
+      'Card',
+      'A bordered block that groups content',
+      'Relume UI has no Card: sections use a div with a 1px black border and p-6/p-8, no radius, no shadow.',
+      'Card surface',
+      { display: 'flex', flexDirection: 'column', gap: '$space.lg', padding: '$space.lg', background: '$color.card', color: '$color.foreground', border: '1px solid $color.border', borderRadius: '$radius.md' },
+      undefined,
+      `<div className="flex flex-col gap-4 border border-border-primary p-6">\n  <h3 className="text-2xl font-bold">Active rovers</h3>\n  <p>Across the fleet</p>\n</div>`,
+    ),
+    comp('CardHeader', 'Block title area', 'Stacks title and description with a small gap.', 'Header', { display: 'flex', flexDirection: 'column', gap: '$space.sm' }),
+    comp('CardContent', 'Block body', 'Plain content area.', 'Content', { display: 'flex', flexDirection: 'column', gap: '$space.sm' }),
+    comp(
+      'Input',
+      'Single-line text field',
+      'min-h-11 (44px), 1px black border, px-3 py-2, transparent fill, square.',
+      '⌕  Search…',
+      { display: 'flex', alignItems: 'center', minHeight: '44px', padding: '8px 12px', borderRadius: '$radius.md', border: '1px solid $color.input', background: 'transparent', color: '$color.mutedForeground', ...tstyle('body') },
+      undefined,
+      `import { Input } from "@relume_io/relume-ui"\n\n<Input type="search" placeholder="Search…" />`,
+    ),
+    comp(
+      'Badge',
+      'Small pill label',
+      'Fully rounded, 1px border, px-2, text-sm semibold. Variants: default (black), secondary (grey), outline, success.',
+      'New',
+      { display: 'inline-flex', alignItems: 'center', width: 'fit-content', padding: '0 8px', borderRadius: '$radius.full', border: '1px solid transparent', background: '$color.primary', color: '$color.primaryForeground', ...tstyle('small'), fontWeight: 600 },
+      {
+        secondary: { background: '$color.muted', color: '$color.foreground' },
+        outline: { background: 'transparent', border: '1px solid $color.border', color: '$color.foreground' },
+        destructive: { background: '#fef3f2', color: '$color.destructiveText' },
+      },
+      `import { Badge } from "@relume_io/relume-ui"\n\n<Badge variant="secondary">+8%</Badge>\n<Badge variant="success">Live</Badge>`,
+    ),
+    comp(
+      'Alert',
+      'Inline message',
+      'Square block with a 1px border; success uses the success tint. Relume UI has no Alert: built from a bordered div.',
+      'Heads up',
+      { display: 'flex', alignItems: 'flex-start', gap: '$space.md', padding: '$space.md', borderRadius: '$radius.md', border: '1px solid $color.successBorder', background: '$color.successSoft', color: '$color.successText', ...tstyle('body') },
+      { destructive: { border: '1px solid $color.destructive', background: '#fef3f2', color: '$color.destructiveText' } },
+    ),
+    comp('AlertTitle', 'Alert headline', 'Bold, one line.', 'Title', { ...tstyle('body'), fontWeight: 700, color: 'inherit' }),
+    comp('AlertDescription', 'Alert supporting text', 'Body text in the alert color.', 'Description', { ...tstyle('body'), color: 'inherit' }),
+    comp(
+      'Switch',
+      'On/off toggle (track)',
+      'Rounded track, black when on.',
+      '',
+      { display: 'flex', alignItems: 'center', width: '40px', height: '24px', padding: '2px', borderRadius: '$radius.full', background: '#cccccc', cursor: 'pointer', flexShrink: 0 },
+      { checked: { background: '$color.primary', justifyContent: 'flex-end' } },
+      `import { Switch } from "@relume_io/relume-ui"\n\n<Switch defaultChecked />`,
+    ),
+    comp('SwitchThumb', 'Switch knob', '20px circle.', '', { width: '20px', height: '20px', borderRadius: '$radius.full', background: '#ffffff', boxShadow: '$shadow.xs' }),
+    comp(
+      'Tabs',
+      'Tab list',
+      'Flex row; each trigger is a plain label, the active one has a black underline.',
+      'Tabs',
+      { display: 'inline-flex', alignItems: 'stretch', alignSelf: 'flex-start', borderBottom: '1px solid $color.border' },
+      undefined,
+      `import { Tabs, TabsList, TabsTrigger, TabsContent } from "@relume_io/relume-ui"\n\n<Tabs defaultValue="all">\n  <TabsList>\n    <TabsTrigger value="all">All</TabsTrigger>\n    <TabsTrigger value="active">Active</TabsTrigger>\n  </TabsList>\n  <TabsContent value="all">…</TabsContent>\n</Tabs>`,
+    ),
+    comp(
+      'Tab',
+      'Single tab trigger',
+      'px-4 py-2, plain text; active gets a 2px black bottom border.',
+      'Overview',
+      { display: 'inline-flex', alignItems: 'center', padding: '8px 16px', borderBottom: '2px solid transparent', background: 'transparent', color: '$color.mutedForeground', ...tstyle('body'), cursor: 'pointer' },
+      { active: { borderBottom: '2px solid $color.border', color: '$color.foreground', fontWeight: 600 } },
+    ),
+    comp('Sidebar', 'Primary navigation rail', 'Light grey rail, black right border.', 'Sidebar', {
+      display: 'flex', flexDirection: 'column', gap: '$space.xs', width: '256px', flexShrink: 0, padding: '$space.sm', background: '$color.sidebar', borderRight: '1px solid $color.border',
+    }),
+    comp('NavLabel', 'Sidebar group label', 'Small semibold label.', 'Operations', { padding: '$space.sm', color: '$color.mutedForeground', ...tstyle('overline') }),
+    comp(
+      'NavItem',
+      'Sidebar menu button',
+      'Square row, p-2, text-base; active is white with medium weight.',
+      'Dashboard',
+      { display: 'flex', alignItems: 'center', gap: '12px', padding: '8px', borderRadius: '$radius.md', background: 'transparent', color: '$color.foreground', ...tstyle('body'), cursor: 'pointer', textAlign: 'left' },
+      { active: { background: '#ffffff', fontWeight: 500 } },
+    ),
+    comp('LogoMark', 'Brand mark', 'Black square, 32px.', '◉', {
+      display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '$radius.md', background: '$color.primary', color: '$color.primaryForeground', fontSize: '16px',
+    }),
+    comp('Avatar', 'User identity', '32px circle, light grey with a black hairline.', 'KM', {
+      display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '$radius.full', background: '$color.muted', border: '1px solid $color.border', color: '$color.foreground', ...tstyle('overline'), flexShrink: 0,
+    }),
+    comp(
+      'TableRow',
+      'Table row (grid)',
+      'border-b 1px black; head variant is bold.',
+      'Row',
+      { display: 'grid', alignItems: 'center', padding: '12px $space.sm', borderBottom: '1px solid $color.border', ...tstyle('body') },
+      { head: { fontWeight: 700 } },
+      `import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@relume_io/relume-ui"\n\n<TableRow>\n  <TableCell>Olympus survey</TableCell>\n  <TableCell>Curiosity-X</TableCell>\n</TableRow>`,
+    ),
+  ],
+  page: fleetPage({
+    brand: 'Acme',
+    logo: '◉',
+    iconSide: 'left',
+    badge: { neutral: 'outline', up: 'secondary', down: 'destructive' },
+    button: { secondary: 'secondary', outline: 'outline', ghost: 'ghost', danger: 'destructive' },
+  }),
+}
+
 /* ------------------------------------------------------------------ */
 
 const BUILTIN_DATE = '2026-09-19T00:00:00.000Z'
 
 export const BUILTIN_STYLES: SavedStyle[] = [
   { id: 'builtin-shadcn', savedAt: BUILTIN_DATE, system: shadcn, builtin: true },
+  { id: 'builtin-relume', savedAt: BUILTIN_DATE, system: relume, builtin: true },
   { id: 'builtin-heroui', savedAt: BUILTIN_DATE, system: heroui, builtin: true },
   { id: 'builtin-halo', savedAt: BUILTIN_DATE, system: halo, builtin: true },
   { id: 'builtin-lunaris', savedAt: BUILTIN_DATE, system: lunaris, builtin: true },

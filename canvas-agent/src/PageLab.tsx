@@ -1,12 +1,16 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { providerMeta, resolvedModel, type AIConfig } from './ai'
+import { abortActiveCalls, explainError, providerMeta, resolvedModel, type AIConfig, type ErrorReport } from './ai'
+import { copyText, downloadText, systemToCss, systemToTailwindTheme } from './handover'
+import { subscribeLog } from './log'
 import {
   componentToCss,
   generateDesignSystem,
+  generateExtras,
   generateWithStyle,
   nodeStyle,
   paletteOf,
+  repairDesign,
   parseImportedStyles,
   resolveStyle,
   tokensToCss,
@@ -15,12 +19,14 @@ import {
   type SavedStyle,
   type TypeStyle,
 } from './lab'
+import { ColorAdaptations, FontSpecimens, IconsSection, ImagesSection, LangIcon, OverlaysSection, StatesRow, TextAdaptationsSection, imageStyle, useGoogleFonts } from './LanguageSheet'
+import { ensureLanguage, withMode } from './language'
 import type { LabState } from './projects'
 import { countTree, findById, insertChild, lastNodeId, patchNode, sleep } from './tree'
-import { AgentActivityDots, AgentCursor, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
+import { AgentActivityDots, AgentCursor, AgentError, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
 
 /* ================================================================== *
- *  Page 2 — Design Lab: no framework vocabulary. The model invents a
+ *  Page 2 — Style template (the design lab): no framework vocabulary. The model invents a
  *  design language (philosophy → raw tokens → component library),
  *  the page is composed from component instances, and the language
  *  itself is published as a guideline sheet — like designing something
@@ -85,6 +91,7 @@ function LabRenderer(props: LabRendererProps) {
   const style: React.CSSProperties = {
     position: 'relative',
     ...nodeStyle(node, system),
+    ...(node.image ? imageStyle(system, node.image) : {}),
     ...(isBuilding
       ? { outline: '2px solid #e879f9', outlineOffset: '-1px' }
       : isActive
@@ -127,6 +134,7 @@ function LabRenderer(props: LabRendererProps) {
   const children = node.children?.map((child) => <LabRenderer key={child.id} {...props} node={child} />)
   const body = (
     <>
+      {node.icon && system.extras && <LangIcon name={node.icon} spec={system.extras.icons} />}
       {node.text}
       {node.text === '' && <span style={{ opacity: 0 }}>·</span>}
       {children}
@@ -158,7 +166,7 @@ function SystemSheet({ system }: { system: DesignSystem }) {
   const fg = (pageStyle.color as string) ?? Object.values(system.tokens.color)[0] ?? '#111111'
 
   return (
-    <div className="w-[1240px] overflow-hidden rounded-xl shadow-2xl" style={{ background: bg, color: fg }}>
+    <div className="design-surface w-[1240px] overflow-hidden rounded-xl shadow-2xl" style={{ background: bg, color: fg }}>
       {/* Identity */}
       <div style={{ padding: '48px 56px 32px' }}>
         <p className="font-mono text-[10px] uppercase tracking-[0.25em] opacity-50">Design language · generated guideline</p>
@@ -196,6 +204,11 @@ function SystemSheet({ system }: { system: DesignSystem }) {
         </div>
       </SheetSection>
 
+      {/* Color adaptations */}
+      <SheetSection title="Color adaptations · ramps · light and dark · contrast" fg={fg}>
+        <ColorAdaptations system={system} />
+      </SheetSection>
+
       {/* Type scale */}
       <SheetSection title="Type scale" fg={fg}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -221,6 +234,14 @@ function SystemSheet({ system }: { system: DesignSystem }) {
             </div>
           ))}
         </div>
+      </SheetSection>
+
+      {/* Fonts + text adaptations */}
+      <SheetSection title="Fonts · families, weights, pairing" fg={fg}>
+        <FontSpecimens system={system} />
+      </SheetSection>
+      <SheetSection title="Text adaptations · surfaces, devices, rules" fg={fg}>
+        <TextAdaptationsSection system={system} />
       </SheetSection>
 
       {/* Rhythm, geometry, depth */}
@@ -254,15 +275,26 @@ function SystemSheet({ system }: { system: DesignSystem }) {
         </div>
       </SheetSection>
 
+      {/* Icons, overlays, images */}
+      <SheetSection title="Icons" fg={fg}>
+        <IconsSection system={system} />
+      </SheetSection>
+      <SheetSection title="Overlays · modal, drawer, popover, tooltip, toast, menu" fg={fg}>
+        <OverlaysSection system={system} />
+      </SheetSection>
+      <SheetSection title="Images · treatments and generated art" fg={fg}>
+        <ImagesSection system={system} />
+      </SheetSection>
+
       {/* Tokens as code */}
       <SheetSection title="Tokens · CSS custom properties" fg={fg}>
         <CodeBlock code={tokensToCss(system)} />
       </SheetSection>
 
       {/* Component library */}
-      <SheetSection title={`Component library · ${system.components.length} definitions`} fg={fg} last>
+      <SheetSection title={`Component library · ${system.components.filter((c) => !c.overlay).length} components · every state`} fg={fg} last>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
-          {system.components.map((c) => (
+          {system.components.filter((c) => !c.overlay).map((c) => (
             <div key={c.name} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                 <span className="font-mono" style={{ fontSize: 12, fontWeight: 700 }}>{c.name}</span>
@@ -283,6 +315,7 @@ function SystemSheet({ system }: { system: DesignSystem }) {
                   </div>
                 ))}
               </div>
+              <StatesRow component={c} system={system} />
               <details style={{ maxWidth: 640 }}>
                 <summary className="cursor-pointer font-mono" style={{ fontSize: 10.5, opacity: 0.6 }}>
                   code{c.code ? ' · library usage + CSS' : ' · CSS'}
@@ -380,13 +413,34 @@ export default function PageLab({
   const [system, setSystem] = useState<DesignSystem | null>(initial?.system ?? null)
   const [tree, setTree] = useState<LabNode | null>(initial?.system?.page ?? null)
   const [view, setView] = useState<'page' | 'system'>('page')
+  const [mode, setMode] = useState<'light' | 'dark'>('light')
+  const [completing, setCompleting] = useState(false)
   const [running, setRunning] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [instruction, setInstruction] = useState<string | null>(initial?.instruction ?? null)
+  // Every screen sees a COMPLETE language: states, icons, fonts, adaptations, overlays, images filled in by code.
+  const display = useMemo(() => {
+    if (!system) return null
+    const full = withMode(ensureLanguage(system, instruction ?? ''), mode)
+    if (mode === 'light') return full
+    // the dark theme has its own contrast: check the page again against the swapped colors (on a copy)
+    const copy = structuredClone(full)
+    repairDesign(copy)
+    return copy
+  }, [system, mode, instruction])
+  useGoogleFonts(display?.extras?.fonts)
   const [steps, setSteps] = useState<AgentStep[]>([])
   const [doneSummary, setDoneSummary] = useState<string | null>(initial?.doneSummary ?? null)
   const [buildingNodeId, setBuildingNodeId] = useState<string | null>(null)
   const artboardRef = useRef<HTMLDivElement>(null)
+  const [error, setError] = useState<ErrorReport | null>(null)
+  const runningRef = useRef(false)
+  const [exportNote, setExportNote] = useState<string | null>(null)
+  useEffect(() => {
+    if (!exportNote) return
+    const t = window.setTimeout(() => setExportNote(null), 1800)
+    return () => window.clearTimeout(t)
+  }, [exportNote])
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null)
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null)
   const runIdRef = useRef(0)
@@ -492,12 +546,32 @@ export default function PageLab({
     ])
   }, [])
 
+  // live detail on the active step (elapsed, chars received…)
+  const tickStatus = useCallback((note: string) => {
+    setSteps((prev) => (prev.some((s) => s.state === 'active') ? prev.map((s) => (s.state === 'active' ? { ...s, note } : s)) : prev))
+  }, [])
+
   const failStatus = useCallback((label: string) => {
     setSteps((prev) => [
       ...prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' as const } : s)),
       { id: nextStepId(), label, state: 'error' },
     ])
   }, [])
+
+  useEffect(() => {
+    runningRef.current = running
+  }, [running])
+
+  // Both canvases stay mounted, so only the one that is running listens.
+  useEffect(
+    () =>
+      subscribeLog((entry) => {
+        if (!runningRef.current || !entry.ui) return
+        if (entry.ui === 'tick') tickStatus(entry.msg)
+        else pushStatus(`${entry.level === 'warn' ? '⚠ ' : ''}${entry.msg}`)
+      }),
+    [pushStatus, tickStatus],
+  )
 
   const runPrompt = useCallback(
     async (userPrompt: string) => {
@@ -518,6 +592,7 @@ export default function PageLab({
       setDoneSummary(null)
       setInstruction(trimmed)
       setSteps([])
+      setError(null)
       const started = performance.now()
       const model = resolvedModel(config)
       const base = activeStyleId ? (styles.find((s) => s.id === activeStyleId) ?? null) : null
@@ -550,13 +625,15 @@ export default function PageLab({
       } catch (err) {
         if (runIdRef.current !== myRun) return
         failStatus(`Generation failed — ${err instanceof Error ? err.message : String(err)}`)
+        setError(explainError(config, err))
+        setBuildingNodeId(null)
         setRunning(false)
         onPersist({ system: null, instruction: trimmed, doneSummary: null })
         return
       }
       if (runIdRef.current !== myRun) return
 
-      const sys = result.system
+      let sys = ensureLanguage(result.system, trimmed)
       if (base) {
         pushStatus(
           `Reusing “${base.system.name}” — ${base.system.components.length} published components${result.newComponents ? ` · ${result.newComponents} new` : ''}`,
@@ -575,6 +652,21 @@ export default function PageLab({
         pushStatus(`Defined ${sys.components.length} reusable components — guideline published`)
       }
       for (const w of result.warnings) pushStatus(`⚠ ${w}`)
+
+      if (!base) {
+        // Second pass: fonts, icons, states, dark theme, text, overlays, images chosen FOR this language.
+        pushStatus('Completing the language — fonts, icons, component states, dark theme, text, overlays, images')
+        try {
+          const completed = await generateExtras(config, sys, trimmed)
+          if (runIdRef.current !== myRun) return
+          sys = completed.system
+          pushStatus(completed.used.length ? `Chosen by the model: ${completed.used.join(', ')} — the rest is derived from the tokens` : 'The model added nothing usable — every part is derived from the tokens')
+          for (const w of completed.ignored) pushStatus(`⚠ ${w}`)
+        } catch (err) {
+          if (runIdRef.current !== myRun) return
+          pushStatus(`⚠ The completion pass failed (${err instanceof Error ? err.message.slice(0, 90) : 'error'}) — every part is derived from the tokens`)
+        }
+      }
       setSystem(sys)
       if (runIdRef.current !== myRun) return
 
@@ -623,8 +715,44 @@ export default function PageLab({
     [config, running, openConfig, pushStatus, failStatus, activeStyleId, styles, onPersist],
   )
 
+  /** Runs only the second pass, for a built-in, saved or older language. */
+  const completeLanguage = useCallback(async () => {
+    if (!system || completing || running) return
+    if (!config.apiKey.trim()) {
+      openConfig()
+      return
+    }
+    setCompleting(true)
+    setError(null)
+    runningRef.current = true // let the feed listen while this runs
+    pushStatus('Completing the language — fonts, icons, component states, dark theme, text, overlays, images')
+    try {
+      const completed = await generateExtras(config, ensureLanguage(system, instruction ?? ''), instruction ?? system.name)
+      setSystem(completed.system)
+      pushStatus(completed.used.length ? `Chosen by the model: ${completed.used.join(', ')} — the rest is derived from the tokens` : 'The model added nothing usable — every part is derived from the tokens')
+      for (const w of completed.ignored) pushStatus(`⚠ ${w}`)
+      setSteps((prev) => prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' as const } : s)))
+      onPersist({ system: completed.system, instruction, doneSummary })
+    } catch (err) {
+      failStatus(`Completion failed — ${err instanceof Error ? err.message : String(err)}`)
+      setError(explainError(config, err))
+    } finally {
+      runningRef.current = false
+      setCompleting(false)
+    }
+  }, [system, completing, running, config, openConfig, pushStatus, failStatus, instruction, doneSummary, onPersist])
+
+  const stopRun = useCallback(() => {
+    ++runIdRef.current // must come first: the aborted call's catch checks it
+    abortActiveCalls()
+    setRunning(false)
+    setBuildingNodeId(null)
+    failStatus('Stopped by you')
+  }, [failStatus])
+
   const clearCanvas = useCallback(() => {
     ++runIdRef.current
+    setError(null)
     setRunning(false)
     setSystem(null)
     setTree(null)
@@ -651,7 +779,7 @@ export default function PageLab({
             <span className={`relative inline-flex size-2 rounded-full ${running ? 'bg-amber-400' : 'bg-emerald-400'}`} />
           </span>
           <div className="flex min-w-0 flex-1 flex-col">
-            <h1 className="text-[13px] font-semibold tracking-tight">Canvas Agent · Design Lab</h1>
+            <h1 className="text-[13px] font-semibold tracking-tight">Canvas Agent · Style template</h1>
             <p className="truncate font-mono text-[10px] text-zinc-500">
               {running ? 'inventing a design language…' : config.apiKey ? `${meta.label.split(' ')[0].toLowerCase()} · ${resolvedModel(config) || 'no model'}` : 'no provider configured'}
             </p>
@@ -717,6 +845,15 @@ export default function PageLab({
               <>❖ Invent a design language</>
             )}
           </button>
+          {running && (
+            <button
+              type="button"
+              onClick={stopRun}
+              className="rounded-lg border border-rose-500/40 px-3.5 py-2 text-[12px] font-medium text-rose-300 transition-colors hover:bg-rose-950/40"
+            >
+              ■ Stop
+            </button>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {LAB_EXAMPLES.map((p) => (
               <button
@@ -810,27 +947,87 @@ export default function PageLab({
               agent writing
             </span>
           )}
+          {display?.extras && !running && (
+            <div className="flex shrink-0 items-center gap-0.5 rounded-full border border-zinc-800 p-0.5 font-mono text-[10px]" title="Preview the page and the sheet in the language's light or dark theme">
+              {(['light', 'dark'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  aria-pressed={mode === m}
+                  className={`rounded-full px-2.5 py-0.5 transition-colors ${mode === m ? 'bg-emerald-600/80 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          )}
+          {system && !running && (
+            <button
+              type="button"
+              disabled={completing}
+              onClick={completeLanguage}
+              title="Ask the model to choose fonts, icons, states, a dark theme, text rules, overlays and images for this language"
+              className="shrink-0 rounded-lg border border-zinc-800 px-2.5 py-1 font-mono text-[11px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {completing ? 'completing…' : '✦ Complete language'}
+            </button>
+          )}
           <span className="ml-auto truncate font-mono text-[10px] text-zinc-600">
             {system ? `language: ${system.name}` : instruction ?? 'no brief yet'}
           </span>
+          {system && !running && (
+            <div className="flex shrink-0 items-center gap-1.5">
+              {exportNote && <span className="font-mono text-[10px] text-emerald-400">{exportNote}</span>}
+              <button
+                type="button"
+                title="Copy this style's colors, fonts, type, spacing, radius and shadows as CSS variables"
+                onClick={async () => setExportNote((await copyText(systemToCss(system))) ? 'CSS variables copied' : 'copy blocked')}
+                className="rounded-lg border border-zinc-800 px-2.5 py-1 font-mono text-[11px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+              >
+                Copy CSS
+              </button>
+              <button
+                type="button"
+                title="Copy a Tailwind CSS v4 @theme block for this style"
+                onClick={async () => setExportNote((await copyText(systemToTailwindTheme(system))) ? 'Tailwind theme copied' : 'copy blocked')}
+                className="rounded-lg border border-zinc-800 px-2.5 py-1 font-mono text-[11px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+              >
+                Copy Tailwind theme
+              </button>
+              <button
+                type="button"
+                title="Download the Tailwind theme as a CSS file"
+                onClick={() => downloadText(`${system.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-theme.css`, systemToTailwindTheme(system), 'text/css')}
+                className="rounded-lg border border-zinc-800 px-2.5 py-1 font-mono text-[11px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+              >
+                ⇣ .css
+              </button>
+            </div>
+          )}
         </header>
 
         <div className="canvas-backdrop thin-scroll relative flex-1 overflow-auto bg-zinc-900" onClick={() => setActiveNodeId(null)}>
-          <div className="flex min-h-full items-start justify-center px-10 pt-24 pb-16">
-            <div ref={artboardRef} className="relative">
+          <div className="flex min-h-full items-start px-10 pt-24 pb-16">
+            <div ref={artboardRef} className="relative mx-auto">
               <AgentCursor
                 containerRef={artboardRef}
                 targetId={buildingNodeId}
                 active={running && view === 'page'}
                 name={providerMeta(config.provider).label.split(' ')[0]}
               />
+              {error && !running && (
+                <div className="mb-4">
+                  <AgentError report={error} onRetry={() => runPrompt(instruction ?? prompt)} onSettings={openConfig} onDismiss={() => setError(null)} />
+                </div>
+              )}
               {running && (
                 <div className="absolute -top-11 right-0 z-30">
                   <AgentActivityDots accent="bg-emerald-500" label={steps.find((s) => s.state === 'active')?.label} />
                 </div>
               )}
             {view === 'system' && system ? (
-              <SystemSheet system={system} />
+              <SystemSheet system={display ?? system} />
             ) : tree === null ? (
               <div className="flex h-[480px] w-[1240px] max-w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-700/70">
                 {running ? (
@@ -844,17 +1041,17 @@ export default function PageLab({
                   <>
                     <p className="font-mono text-[11px] text-zinc-500">frame-02 · blank slate</p>
                     <p className="max-w-[280px] text-center text-[11px] leading-relaxed text-zinc-600">
-                      No vocabulary, no library. Give the agent a world and it designs a language for it — then builds
+                      No preset styles, no library. Give the agent a world and it designs a language for it — then builds
                       the page from its own components.
                     </p>
                   </>
                 )}
               </div>
             ) : (
-              <div className="w-[1240px] overflow-hidden rounded-xl shadow-2xl">
+              <div className="design-surface w-[1240px] overflow-hidden rounded-xl shadow-2xl">
                 <LabRenderer
-                  node={tree}
-                  system={system!}
+                  node={mode === 'dark' && display && !running ? display.page : tree}
+                  system={display ?? system!}
                   activeNodeId={activeNodeId}
                   hoverNodeId={hoverNodeId}
                   buildingNodeId={buildingNodeId}

@@ -1,3 +1,4 @@
+import { ThemeToggle } from './ui'
 import { useCallback, useState } from 'react'
 import type { AIConfig } from './ai'
 import { DesignModal } from './DesignModal'
@@ -8,9 +9,9 @@ import type { CanvasState, LabState, Project } from './projects'
 
 /* ================================================================== *
  *  Workspace — one project, two canvases, one agent:
- *   01 Vocabulary canvas — AI designs within a safelisted Tailwind
+ *   01 Handover design — AI designs within a safelisted Tailwind
  *      vocabulary (fast, predictable, framework-realizable).
- *   02 Design Lab — AI composes from a real token + component system,
+ *   02 Style template — AI composes from a real token + component system,
  *      or invents a raw one from first principles.
  *  Both stay mounted so switching tabs never loses a canvas. Every
  *  finished generation is saved into the project.
@@ -73,20 +74,22 @@ export default function Workspace({ project, styles, library, onLibraryChange, c
           <button
             type="button"
             onClick={() => onUpdate({ page: 'canvas' })}
+            title="Design a real page you can hand to developers: copy React or HTML code, inspect sizes and colors, and export tokens."
             className={`rounded-md px-3 py-1 font-mono text-[11px] transition-colors ${
               page === 'canvas' ? 'bg-fuchsia-600/90 text-white' : 'text-zinc-500 hover:text-zinc-300'
             }`}
           >
-            01 · vocabulary canvas
+            01 · handover design
           </button>
           <button
             type="button"
             onClick={() => onUpdate({ page: 'lab' })}
+            title="Create a reusable design style: colors, type and components. Save it, export its tokens, and apply it to any design."
             className={`rounded-md px-3 py-1 font-mono text-[11px] transition-colors ${
               page === 'lab' ? 'bg-emerald-600/90 text-white' : 'text-zinc-500 hover:text-zinc-300'
             }`}
           >
-            02 · design lab
+            02 · style template
           </button>
         </div>
         <button
@@ -100,6 +103,7 @@ export default function Workspace({ project, styles, library, onLibraryChange, c
           <span className="font-mono text-[11px] text-zinc-300">{style ? style.system.name : 'free design'}</span>
           <span className="font-mono text-[10px] text-zinc-600">▾</span>
         </button>
+        <ThemeToggle />
       </nav>
 
       <div className="min-h-0 flex-1">

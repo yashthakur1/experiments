@@ -206,12 +206,12 @@ export function DesignModal({ mode, styles, initialId, onClose, onConfirm }: Des
           </div>
           {visible.length === 0 && !showFree && (
             <p className="py-16 text-center text-[12px] text-zinc-600">
-              No design system matches “{query}”. Save one from the Design Lab and it will show up here.
+              No design system matches “{query}”. Save one from Style template and it will show up here.
             </p>
           )}
           {filter === 'yours' && yoursCount === 0 && (
             <p className="py-16 text-center text-[12px] leading-relaxed text-zinc-600">
-              Nothing saved yet. Invent a language in the Design Lab, press “Save current style”, and it appears here.
+              Nothing saved yet. Create one in Style template, press “Save current style”, and it appears here.
             </p>
           )}
         </div>
@@ -273,16 +273,18 @@ export function DesignModal({ mode, styles, initialId, onClose, onConfirm }: Des
                     <button
                       type="button"
                       onClick={() => setPage('canvas')}
+                      title="Design a real page you can hand to developers: copy React or HTML code, inspect sizes and colors, and export tokens."
                       className={`rounded-md px-2.5 py-1.5 transition-colors ${page === 'canvas' ? 'bg-fuchsia-600/90 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
-                      vocabulary
+                      handover design
                     </button>
                     <button
                       type="button"
                       onClick={() => setPage('lab')}
+                      title="Create a reusable design style: colors, type and components. Save it, export its tokens, and apply it to any design."
                       className={`rounded-md px-2.5 py-1.5 transition-colors ${page === 'lab' ? 'bg-emerald-600/90 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
-                      design lab
+                      style template
                     </button>
                   </div>
                 </div>

@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { log, tick } from './log'
+import { getLibrary, libraryPrompt, type LibraryId } from './realui/catalog'
 
 /* ================================================================== *
  *  AI layer — schema, strict system instruction, class sanitizer,
@@ -13,17 +15,25 @@ import Anthropic from '@anthropic-ai/sdk'
 
 export interface CanvasNode {
   id: string
-  type: 'container' | 'text' | 'image' | 'button' | 'grid'
+  /** 'component' is a REAL library component (see realui/catalog.ts). */
+  type: 'container' | 'text' | 'image' | 'button' | 'grid' | 'component'
   label: string
   classes: string // Tailwind CSS strings
   children?: CanvasNode[]
   content?: string
+  /** type 'component' only: the catalog name, e.g. "Button". */
+  component?: string
+  /** type 'component' only: props from the catalog. */
+  props?: Record<string, string | number | boolean>
+  /** Root node only: which real library the whole tree renders with. */
+  library?: LibraryId
 }
 
 export interface GeneratedLayout {
   frameLabel: string
   frameClasses: string
   sections: CanvasNode[]
+  library?: LibraryId
 }
 
 /* ------------------------------------------------------------------ *
@@ -66,20 +76,21 @@ export const PROVIDERS: ProviderMeta[] = [
     id: 'zen',
     label: 'OpenCode Zen',
     keyHint: 'Zen API key',
-    note: 'Zen sends no CORS headers, so requests go through the local dev server (/zen-proxy). Run the app with npm run dev or npm run preview. Zen free models only work inside OpenCode.',
+    note: 'Zen is pay-as-you-go: you are billed per token. Prices shown are $ per million tokens, input / output. Zen sends no CORS headers, so requests go through the local dev server (/zen-proxy): run npm run dev or npm run preview. Zen free models only work inside OpenCode.',
     models: [
-      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-      { id: 'claude-opus-5', label: 'Claude Opus 5' },
+      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 · $1 / $5 · fast, no thinking' },
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 · $2 / $10' },
+      { id: 'claude-opus-5', label: 'Claude Opus 5 · $5 / $25' },
       { id: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
       { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
-      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
-      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
-      { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra · $2 / $12' },
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash · $1.50 / $7.50' },
+      { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro · $2 / $12' },
       { id: 'grok-4.6', label: 'Grok 4.6' },
-      { id: 'kimi-k3', label: 'Kimi K3' },
-      { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
-      { id: 'glm-5.3', label: 'GLM 5.3' },
-      { id: 'minimax-m3', label: 'MiniMax M3' },
+      { id: 'kimi-k3', label: 'Kimi K3 · $3 / $15' },
+      { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro · $1.74 / $3.48' },
+      { id: 'glm-5.3', label: 'GLM 5.3 · $1.40 / $4.40' },
+      { id: 'minimax-m3', label: 'MiniMax M3 · $0.30 / $1.20' },
     ],
   },
   {
@@ -119,10 +130,25 @@ export const PROVIDERS: ProviderMeta[] = [
 
 export const DEFAULT_PROVIDER: ProviderId = PROVIDERS[0].id
 
+export type Effort = 'low' | 'medium' | 'high'
+
+export const EFFORTS: Array<{ id: Effort; label: string; hint: string }> = [
+  { id: 'low', label: 'Low — fastest', hint: 'The model barely thinks before it writes the layout. Best for most pages.' },
+  { id: 'medium', label: 'Medium', hint: 'Some planning first. Usually 10–40 seconds slower.' },
+  { id: 'high', label: 'High — slowest', hint: 'Deep reasoning first. Can take minutes on large prompts.' },
+]
+
+/** Layout generation is mostly writing, not puzzle solving: think little by default. */
+export const DEFAULT_EFFORT: Effort = 'low'
+
+/** Providers whose models spend time thinking before they answer. */
+export const providerHasEffort = (id: ProviderId) => id === 'claude' || id === 'openai' || id === 'zen'
+
 export interface ProviderProfile {
   apiKey: string
   /** '' means "use the provider's default model". */
   model: string
+  effort?: Effort
 }
 
 /**
@@ -134,6 +160,8 @@ export interface AIConfig {
   provider: ProviderId
   model: string
   apiKey: string
+  /** How much the model may think before answering (see EFFORTS). */
+  effort: Effort
   profiles: Partial<Record<ProviderId, ProviderProfile>>
 }
 
@@ -149,18 +177,18 @@ export function defaultModel(id: ProviderId): string {
 
 /** Point the config at another provider, restoring that provider's saved key + model. */
 export function switchProvider(config: AIConfig, next: ProviderId): AIConfig {
-  const profiles = { ...config.profiles, [config.provider]: { apiKey: config.apiKey, model: config.model } }
+  const profiles = { ...config.profiles, [config.provider]: { apiKey: config.apiKey, model: config.model, effort: config.effort } }
   const saved = profiles[next]
-  return { provider: next, model: saved?.model ?? '', apiKey: saved?.apiKey ?? '', profiles }
+  return { provider: next, model: saved?.model ?? '', apiKey: saved?.apiKey ?? '', effort: saved?.effort ?? DEFAULT_EFFORT, profiles }
 }
 
 /** Fold the active provider's key + model back into `profiles` (call before saving). */
 export function commitProfile(config: AIConfig): AIConfig {
-  return { ...config, profiles: { ...config.profiles, [config.provider]: { apiKey: config.apiKey, model: config.model } } }
+  return { ...config, profiles: { ...config.profiles, [config.provider]: { apiKey: config.apiKey, model: config.model, effort: config.effort } } }
 }
 
 export function loadConfig(): AIConfig {
-  const fresh: AIConfig = { provider: DEFAULT_PROVIDER, model: '', apiKey: '', profiles: {} }
+  const fresh: AIConfig = { provider: DEFAULT_PROVIDER, model: '', apiKey: '', effort: DEFAULT_EFFORT, profiles: {} }
   try {
     const raw = localStorage.getItem(CONFIG_KEY)
     if (!raw) return fresh
@@ -168,7 +196,7 @@ export function loadConfig(): AIConfig {
     const profiles: AIConfig['profiles'] = {}
     for (const p of PROVIDERS) {
       const entry = saved?.profiles?.[p.id]
-      if (entry) profiles[p.id] = { apiKey: String(entry.apiKey ?? ''), model: String(entry.model ?? '') }
+      if (entry) profiles[p.id] = { apiKey: String(entry.apiKey ?? ''), model: String(entry.model ?? ''), effort: EFFORTS.some((e) => e.id === entry.effort) ? entry.effort : DEFAULT_EFFORT }
     }
     // Pre-profiles format: one flat provider/model/apiKey. 'openzen' pointed at a
     // made-up endpoint, so it is dropped rather than migrated.
@@ -177,7 +205,7 @@ export function loadConfig(): AIConfig {
     }
     const provider: ProviderId = PROVIDERS.some((p) => p.id === saved?.provider) ? saved.provider : DEFAULT_PROVIDER
     const active = profiles[provider]
-    return { provider, model: active?.model ?? '', apiKey: active?.apiKey ?? '', profiles }
+    return { provider, model: active?.model ?? '', apiKey: active?.apiKey ?? '', effort: active?.effort ?? DEFAULT_EFFORT, profiles }
   } catch {
     return fresh // corrupted config falls through to defaults
   }
@@ -286,6 +314,15 @@ const ALLOWED_CLASS_PATTERNS: RegExp[] = [
   /^divide-(?:x|y)$/,
   /^shadow(?:-(?:sm|md|lg|xl|2xl|inner|none))?$/,
   /^opacity-(?:0|5|10|20|25|30|40|50|60|70|75|80|90|95|100)$/,
+  // shadcn/ui semantic colors (defined by the .shadcn-scope theme)
+  /^(?:bg|text|border)-(?:background|foreground|card|card-foreground|muted|muted-foreground|primary|primary-foreground|secondary|secondary-foreground|accent|accent-foreground|destructive|border|input)$/,
+  /^(?:bg|text|border)-(?:background|foreground|card|muted|muted-foreground|primary|secondary|accent|destructive|border)\/(?:10|20|30|40|50|60|70|80|90)$/,
+  // Relume role colors (defined by the .relume-scope theme)
+  /^bg-background-(?:primary|secondary|tertiary|alternative|success|error)$/,
+  /^text-text-(?:primary|secondary|alternative|success|error)$/,
+  /^border-border-(?:primary|secondary|tertiary|alternative|success|error)$/,
+  /^(?:text-md|text-8xl|text-9xl|text-10xl|max-w-xxs|max-w-xxl|px-\[5%\]|shadow-(?:xxsmall|xsmall|small|medium|large))$/,
+  /^(?:py|pt|pb)-(?:28|32)$/, // Relume section rhythm (112px, 128px)
   /^(?:overflow-hidden|overflow-auto|relative|mx-auto|ml-auto|mr-auto|mt-auto|mb-auto|object-cover|aspect-square|aspect-video|backdrop-blur)$/,
 ]
 
@@ -293,28 +330,51 @@ export function isAllowedClass(token: string): boolean {
   return ALLOWED_CLASS_PATTERNS.some((re) => re.test(token))
 }
 
-function sanitizeClasses(value: unknown, dropped: Set<string>): string {
+/** Palette colors and gradients. A real library's theme owns color, so these are removed there. */
+const PALETTE_COLOR = new RegExp(`^(?:bg|text|border|from|via|to|ring)-${COLOR}-${SHADE}(?:/\\d+)?$`)
+const PALETTE_BASIC = /^(?:(?:bg|text|border|ring)-(?:white|black)(?:\/\d+)?|bg-gradient-to-(?:t|tr|r|br|b|bl|l|tl))$/
+export const isPaletteColor = (token: string) => PALETTE_COLOR.test(token) || PALETTE_BASIC.test(token)
+
+function sanitizeClasses(value: unknown, dropped: Set<string>, themeStripped?: Set<string>): string {
   if (typeof value !== 'string') return ''
   const kept: string[] = []
   for (const token of value.split(/\s+/).filter(Boolean)) {
-    if (isAllowedClass(token)) kept.push(token)
+    if (themeStripped && isPaletteColor(token)) themeStripped.add(token)
+    else if (isAllowedClass(token)) kept.push(token)
     else dropped.add(token)
   }
   return kept.join(' ')
+}
+
+/** How much of a design is made of real library components (icons do not count). */
+export function componentStats(root: CanvasNode): { components: number; total: number } {
+  let components = 0
+  let total = 0
+  const walk = (n: CanvasNode) => {
+    total++
+    if (n.type === 'component' && n.component !== 'Icon') components++
+    n.children?.forEach(walk)
+  }
+  walk(root)
+  return { components, total }
 }
 
 /* ------------------------------------------------------------------ *
  *  Response parsing + AST validation
  * ------------------------------------------------------------------ */
 
-const NODE_TYPES = new Set(['container', 'grid', 'text', 'button', 'image'])
+const NODE_TYPES = new Set(['container', 'grid', 'text', 'button', 'image', 'component'])
 const MAX_NODES = 90
 const MAX_DEPTH = 6
+/** Real components nest deeper by design: Tabs › TabsContent › Table › TableBody › TableRow › TableCell. */
+const MAX_DEPTH_REAL = 10
 
 export interface ValidationResult {
   layout: GeneratedLayout
   droppedClasses: string[]
   nodeCount: number
+  /** Real-component repairs (unknown component, wrong nesting…). */
+  warnings: string[]
 }
 
 function extractJson(text: string): unknown {
@@ -325,8 +385,11 @@ function extractJson(text: string): unknown {
   return JSON.parse(cleaned.slice(start, end + 1))
 }
 
-export function validateLayout(raw: unknown): ValidationResult {
+export function validateLayout(raw: unknown, libraryId?: LibraryId | null, opts: { partial?: boolean } = {}): ValidationResult {
+  const lib = getLibrary(libraryId)
   const dropped = new Set<string>()
+  const warnings = new Set<string>()
+  const themeStripped = new Set<string>() // palette classes removed in real-library mode
   const seenIds = new Set<string>()
   let counter = 0
   let total = 0
@@ -338,38 +401,103 @@ export function validateLayout(raw: unknown): ValidationResult {
     throw new Error(`response has no "sections" array (top-level keys: ${Object.keys(obj).join(', ') || 'none'})`)
   }
 
-  const coerce = (input: unknown, depth: number): CanvasNode | null => {
-    if (total >= MAX_NODES || depth > MAX_DEPTH || typeof input !== 'object' || input === null) return null
-    total++
+  /** Keeps only props the catalog lists, with values of the right kind. */
+  const cleanProps = (specProps: NonNullable<import('./realui/catalog').ComponentSpec['props']>, given: unknown) => {
+    const out: Record<string, string | number | boolean> = {}
+    if (typeof given !== 'object' || given === null) return out
+    for (const [key, value] of Object.entries(given as Record<string, unknown>)) {
+      const spec = specProps[key]
+      if (!spec) {
+        warnings.add(`Dropped unknown prop “${key}”`)
+        continue
+      }
+      if (spec.kind === 'enum') {
+        if (typeof value === 'string' && spec.values!.includes(value)) out[key] = value
+        else warnings.add(`Dropped invalid value for “${key}”`)
+      } else if (spec.kind === 'string') {
+        if (typeof value === 'string' || typeof value === 'number') out[key] = String(value)
+      } else if (spec.kind === 'number') {
+        const n = Number(value)
+        if (Number.isFinite(n)) out[key] = n
+      } else if (spec.kind === 'boolean') {
+        out[key] = value === true || value === 'true'
+      }
+    }
+    return out
+  }
+
+  const coerce = (input: unknown, depth: number, ancestors: string[]): CanvasNode | null => {
+    if (total >= MAX_NODES || depth > (lib ? MAX_DEPTH_REAL : MAX_DEPTH) || typeof input !== 'object' || input === null) return null
     const n = input as Record<string, unknown>
+    // Mid-stream the node's id / type / component may still be half-written ("Table" on its way to "TableRow"): wait for the whole word.
+    if (opts.partial && (n.__incomplete === true || !NODE_TYPES.has(n.type as string))) return null
+    total++
     let id = typeof n.id === 'string' && n.id.trim() ? n.id.trim() : `node-${++counter}`
     while (seenIds.has(id)) id = `${id}-${++counter}`
     seenIds.add(id)
-    const type = NODE_TYPES.has(n.type as string) ? (n.type as CanvasNode['type']) : 'container'
-    const node: CanvasNode = {
-      id,
-      type,
-      label: typeof n.label === 'string' && n.label.trim() ? n.label.trim() : type,
-      classes: sanitizeClasses(n.classes, dropped),
+    let type = NODE_TYPES.has(n.type as string) ? (n.type as CanvasNode['type']) : 'container'
+    const label = typeof n.label === 'string' && n.label.trim() ? n.label.trim() : type
+    const classes = sanitizeClasses(n.classes, dropped, lib ? themeStripped : undefined)
+    const kidsOf = (list: unknown, nextAncestors: string[]) =>
+      (Array.isArray(list) ? list : []).map((c) => coerce(c, depth + 1, nextAncestors)).filter((c): c is CanvasNode => c !== null)
+
+    // Real components: only inside a real-library design.
+    let componentName = typeof n.component === 'string' ? n.component : undefined
+    if (lib && type === 'button') {
+      type = 'component' // the model was told not to; a plain button becomes the library's Button
+      componentName = 'Button'
     }
+    if (type === 'component') {
+      const spec = lib?.components.find((c) => c.name === componentName)
+      const missingParent = spec?.requires && !spec.requires.some((r) => ancestors.includes(r))
+      // Mid-stream, a half-written name ("Tab" on its way to "TabsList") is not a mistake yet: leave the node out until the name is whole.
+      if (opts.partial && lib && !spec) {
+        total--
+        return null
+      }
+      if (!lib || !spec || missingParent) {
+        if (lib) {
+          warnings.add(
+            !spec ? `Unknown component “${componentName ?? '?'}” replaced by a plain block` : `<${spec.name}> must be inside <${spec.requires!.join('> or <')}> — replaced by a plain block`,
+          )
+        }
+        // fall back to a plain block so the design still renders
+        if (typeof n.content === 'string' && !Array.isArray(n.children)) {
+          return { id, type: 'text', label, classes, content: n.content }
+        }
+        return { id, type: 'container', label, classes, children: kidsOf(n.children, ancestors) }
+      }
+      const node: CanvasNode = { id, type: 'component', component: spec.name, label, classes }
+      const props = cleanProps(spec.props ?? {}, n.props)
+      if (Object.keys(props).length) node.props = props
+      if ((spec.takes === 'text' || spec.takes === 'both') && typeof n.content === 'string') node.content = n.content
+      if (spec.takes === 'children' || spec.takes === 'both') node.children = kidsOf(n.children, [...ancestors, spec.name])
+      return node
+    }
+
+    const node: CanvasNode = { id, type, label, classes }
     if ((type === 'text' || type === 'button') && typeof n.content === 'string') node.content = n.content
-    if ((type === 'container' || type === 'grid') && Array.isArray(n.children)) {
-      node.children = n.children.map((c) => coerce(c, depth + 1)).filter((c): c is CanvasNode => c !== null)
-    }
+    if ((type === 'container' || type === 'grid') && Array.isArray(n.children)) node.children = kidsOf(n.children, ancestors)
     return node
   }
 
-  const sections = rawSections.map((s) => coerce(s, 1)).filter((s): s is CanvasNode => s !== null)
+  const sections = rawSections.map((s) => coerce(s, 1, [])).filter((s): s is CanvasNode => s !== null)
   if (sections.length === 0) throw new Error('no valid sections survived validation')
+  if (lib && themeStripped.size) {
+    warnings.add(`Removed ${themeStripped.size} palette color classes (${[...themeStripped].slice(0, 3).join(', ')}…): the ${lib.label} theme owns color`)
+  }
 
   return {
     layout: {
       frameLabel: typeof obj.frameLabel === 'string' && obj.frameLabel.trim() ? obj.frameLabel.trim() : 'Frame · generated',
-      frameClasses: sanitizeClasses(obj.frameClasses, dropped) || 'bg-white',
+      // a real library's theme owns the page background and text color
+      frameClasses: lib ? lib.frameClasses : sanitizeClasses(obj.frameClasses, dropped) || 'bg-white',
       sections,
+      ...(lib ? { library: lib.id } : {}),
     },
     droppedClasses: [...dropped],
     nodeCount: total,
+    warnings: [...warnings],
   }
 }
 
@@ -379,6 +507,169 @@ export function validateLayout(raw: unknown): ValidationResult {
  *  stored in localStorage, and sent only to the selected provider.
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ *  Call watchdog — one per model request. It gives the request a
+ *  timeout at every stage, reports progress to the console, the dev
+ *  terminal and the feed, and turns a silent stall into a visible error.
+ * ------------------------------------------------------------------ */
+
+type CallPhase = 'connecting' | 'thinking' | 'writing'
+
+interface CallWatch {
+  readonly signal: AbortSignal
+  /** Response headers arrived (any status). */
+  connected(status: number): void
+  /** Bytes or events arrived; `phase` says what the model is doing. */
+  touch(phase?: CallPhase): void
+  /** Total characters of output text received so far. */
+  text(chars: number): void
+  finish(chars: number): void
+  /** Stops the watch and returns the error to throw (a timeout gets a clear message). */
+  fail(err: unknown): Error
+  cancel(): void
+}
+
+const CONNECT_TIMEOUT_MS = 60_000
+const CONNECT_TIMEOUT_NO_STREAM_MS = 240_000 // a non-streamed reply sends nothing until it is done
+const IDLE_TIMEOUT_MS = 120_000
+const TOTAL_TIMEOUT_MS = 8 * 60_000
+
+const activeCalls = new Set<CallWatch>()
+
+/** Stops every request in flight (the Stop button). */
+export function abortActiveCalls() {
+  activeCalls.forEach((call) => call.cancel())
+}
+
+function watchCall(config: AIConfig, streaming: boolean): CallWatch {
+  const scope = `${config.provider} · ${resolvedModel(config)}`
+  const ctrl = new AbortController()
+  const t0 = performance.now()
+  const connectLimit = streaming ? CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_NO_STREAM_MS
+  let lastActivity = t0
+  let isConnected = false
+  let phase: CallPhase = 'connecting'
+  let chars = 0
+  let loggedChars = 0
+  let nextBeat = 5
+  let abortReason: string | null = null
+  const elapsed = () => (performance.now() - t0) / 1000
+
+  const describe = () => {
+    const secs = Math.floor(elapsed())
+    if (phase === 'writing') return `receiving output · ${chars.toLocaleString()} chars · ${secs}s`
+    if (phase === 'thinking') {
+      return secs >= 30
+        ? `model is thinking · ${secs}s — taking long. Stop, then lower “Thinking effort” in settings (⚙)`
+        : `model is thinking · ${secs}s`
+    }
+    return isConnected ? `connected, waiting for the first token · ${secs}s` : `waiting for the provider · ${secs}s`
+  }
+
+  const abort = (reason: string) => {
+    if (ctrl.signal.aborted) return
+    abortReason = reason
+    log('error', scope, `giving up — ${reason}`)
+    ctrl.abort()
+  }
+
+  const timer = setInterval(() => {
+    const now = performance.now()
+    tick(scope, describe())
+    if (elapsed() >= nextBeat) {
+      nextBeat += 5
+      log('info', scope, `still working — ${describe()}`)
+    }
+    if (!isConnected && now - t0 > connectLimit) abort(`no response from the provider after ${Math.round(connectLimit / 1000)}s`)
+    else if (isConnected && now - lastActivity > IDLE_TIMEOUT_MS) abort(`no data from the provider for ${IDLE_TIMEOUT_MS / 1000}s`)
+    else if (now - t0 > TOTAL_TIMEOUT_MS) abort(`the request ran longer than ${TOTAL_TIMEOUT_MS / 60_000} minutes`)
+  }, 1000)
+
+  const watch: CallWatch = {
+    signal: ctrl.signal,
+    connected(status) {
+      isConnected = true
+      lastActivity = performance.now()
+      log(status >= 400 ? 'warn' : 'info', scope, `HTTP ${status} after ${elapsed().toFixed(1)}s`)
+    },
+    touch(next) {
+      lastActivity = performance.now()
+      if (next && next !== phase) {
+        phase = next
+        log('info', scope, next === 'thinking' ? `model is thinking (${elapsed().toFixed(1)}s in)` : `first output after ${elapsed().toFixed(1)}s`)
+      }
+    },
+    text(n) {
+      chars = n
+      watch.touch('writing')
+      if (n - loggedChars >= 1000) {
+        loggedChars = n
+        log('info', scope, `receiving output — ${n.toLocaleString()} chars`)
+      }
+    },
+    finish(n) {
+      clearInterval(timer)
+      activeCalls.delete(watch)
+      log('info', scope, `finished in ${elapsed().toFixed(1)}s · ${n.toLocaleString()} chars`)
+    },
+    fail(err) {
+      clearInterval(timer)
+      activeCalls.delete(watch)
+      const error = abortReason
+        ? new Error(`timed out — ${abortReason}`)
+        : err instanceof Error
+          ? err
+          : new Error(String(err))
+      log('error', scope, `failed after ${elapsed().toFixed(1)}s — ${error.message.slice(0, 300)}`)
+      return error
+    },
+    cancel() {
+      if (!ctrl.signal.aborted) {
+        clearInterval(timer)
+        activeCalls.delete(watch)
+        log('warn', scope, 'cancelled by the user')
+        ctrl.abort()
+      }
+    },
+  }
+  activeCalls.add(watch)
+  log('info', scope, `request sent${streaming ? ' (streaming)' : ''}`)
+  return watch
+}
+
+/** A recoverable hiccup: logged, and shown in the feed. */
+function hiccup(config: AIConfig, msg: string) {
+  log('warn', `${config.provider} · ${resolvedModel(config)}`, msg, 'step')
+}
+
+export interface ErrorReport {
+  title: string
+  detail: string
+  hint: string
+}
+
+/** Turns a raw failure into something a person can act on. */
+export function explainError(config: AIConfig, err: unknown): ErrorReport {
+  const detail = (err instanceof Error ? err.message : String(err)).trim()
+  const label = providerMeta(config.provider).label
+  const model = resolvedModel(config)
+  const rules: Array<[RegExp, string, string]> = [
+    [/timed out/i, 'The provider stopped responding', `The request was cancelled by the watchdog. Try again, pick a faster model, or check ${label}'s status page.`],
+    [/\b401\b|invalid api key|missing api key|unauthori[sz]ed|incorrect api key/i, 'The API key was rejected', `Open settings and check the ${label} key.`],
+    [/free tier|\b403\b|forbidden|permission/i, 'Access denied', `${label} refused this request. The key may lack access to ${model}, or the model may be free-tier only inside its own app.`],
+    [/\b404\b|not[ _-]found|unknown model|does not exist|no such model/i, 'Model not found', `${label} does not know "${model}". Pick another model in settings.`],
+    [/\b429\b|rate.?limit|quota|insufficient|billing|credit|overloaded|\b529\b/i, 'Rate-limited, out of credit, or overloaded', `Wait a moment and retry, or switch model or provider in settings.`],
+    [/\b5\d\d\b|bad gateway|unavailable/i, 'The provider had a server error', 'This is on the provider side. Retry in a moment.'],
+    [/failed to fetch|networkerror|load failed|network request failed/i, 'Could not reach the provider', config.provider === 'zen' ? 'OpenCode Zen is reached through the dev server proxy. Run the app with npm run dev or npm run preview (not a static build), and check that the server is still running.' : `Check your connection and any browser extension that blocks requests to ${label}.`],
+    [/validation|sections|json|schema|no text|no message|no streamed/i, 'The model answer could not be used', 'The model returned something that is not the expected layout. Retry, or pick a stronger model in settings.'],
+  ]
+  for (const [pattern, title, hint] of rules) if (pattern.test(detail)) return { title, detail, hint }
+  return { title: 'Generation failed', detail, hint: 'Open the browser console (or the dev-server terminal) and look for [canvas-agent] lines.' }
+}
+
+/** Claude models that accept `output_config.effort` (per the Anthropic effort docs). */
+const claudeSupportsEffort = (model: string) => /^claude-(fable-5|mythos|opus-(5|4[-.][5-8])|sonnet-(5|4[-.]6))/.test(model)
+
 /** Where Zen is reachable from the browser — see the /zen-proxy entry in vite.config.ts. */
 const ZEN_BASE = '/zen-proxy/v1'
 
@@ -386,24 +677,54 @@ async function callClaude(
   config: AIConfig,
   systemPrompt: string,
   userPrompt: string,
-  onText?: (fullText: string) => void,
+  onText: ((fullText: string) => void) | undefined,
+  w: CallWatch,
   viaZen = false,
+  useEffort = true,
 ): Promise<string> {
   // The SDK appends /v1/messages itself and needs an absolute base URL. Zen's
   // /messages route takes the same x-api-key header as Anthropic.
   const client = new Anthropic({
     apiKey: config.apiKey,
     ...(viaZen ? { baseURL: `${window.location.origin}/zen-proxy` } : {}),
+    maxRetries: 1,
     dangerouslyAllowBrowser: true,
   })
-  const stream = client.messages.stream({
-    model: resolvedModel(config),
-    max_tokens: 16000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userPrompt }],
+  const MAX_TOKENS = 16000 // also the most one call can bill: thinking and answer share this cap
+  const stream = client.messages.stream(
+    {
+      model: resolvedModel(config),
+      max_tokens: MAX_TOKENS,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+      // Layout JSON is mostly writing, so cap the thinking. Models without effort (Haiku, older Sonnet) reject the field.
+      ...(useEffort && claudeSupportsEffort(resolvedModel(config)) ? { output_config: { effort: config.effort } } : {}),
+    },
+    { signal: w.signal },
+  )
+  stream.on('streamEvent', (event) => {
+    if (event.type === 'message_start') w.connected(200)
+    else w.touch()
+    if (event.type === 'content_block_start') w.touch(event.content_block.type === 'text' ? 'writing' : 'thinking')
   })
   if (onText) stream.on('text', (_delta, snapshot) => onText(snapshot))
-  const response = await stream.finalMessage()
+  let response
+  try {
+    response = await stream.finalMessage()
+  } catch (err) {
+    if (useEffort && err instanceof Anthropic.APIError && err.status === 400 && /effort|output_config/i.test(err.message)) {
+      hiccup(config, 'endpoint rejected the effort setting — retrying without it')
+      return callClaude(config, systemPrompt, userPrompt, onText, w, viaZen, false)
+    }
+    throw err
+  }
+  // Thinking tokens are billed as output tokens, so show them separately.
+  const usage = response.usage as { input_tokens: number; output_tokens: number; output_tokens_details?: { thinking_tokens?: number } }
+  log(
+    'info',
+    `${config.provider} · ${resolvedModel(config)}`,
+    `stop_reason=${response.stop_reason} · input_tokens=${usage.input_tokens} · output_tokens=${usage.output_tokens}${usage.output_tokens_details?.thinking_tokens != null ? ` (thinking ${usage.output_tokens_details.thinking_tokens})` : ''}`,
+  )
   if (response.stop_reason === 'refusal') {
     throw new Error('Claude declined this request (stop_reason: refusal)')
   }
@@ -411,8 +732,32 @@ async function callClaude(
     .filter((b): b is Anthropic.TextBlock => b.type === 'text')
     .map((b) => b.text)
     .join('')
-  if (!text) throw new Error('Claude returned no text content')
+  if (!text) {
+    throw new Error(
+      `Claude returned no text content (stop_reason: ${response.stop_reason}${response.stop_reason === 'max_tokens' ? ` — thinking used the whole ${MAX_TOKENS}-token budget` : ''})`,
+    )
+  }
+  if (response.stop_reason === 'max_tokens') throw new Error(`Claude ran out of tokens (${MAX_TOKENS}) mid-answer, so the JSON is cut off`)
   return text
+}
+
+/** Reads a server-sent-event body line by line; `onData` gets each `data:` payload. */
+async function readSse(body: ReadableStream<Uint8Array>, w: CallWatch, onData: (payload: string) => void) {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    w.touch()
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop()!
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed.startsWith('data:')) onData(trimmed.slice(5).trim())
+    }
+  }
 }
 
 /**
@@ -427,14 +772,16 @@ async function callOpenAICompatible(
   systemPrompt: string,
   userPrompt: string,
   baseUrl: string,
-  onText?: (fullText: string) => void,
+  onText: ((fullText: string) => void) | undefined,
+  w: CallWatch,
 ): Promise<string> {
   const reasoningHeavy = config.provider === 'openai' || config.provider === 'zen'
   let useMaxCompletionTokens = config.provider === 'openai'
   let useJsonFormat = true
+  let useReasoningEffort = config.provider === 'openai' || config.provider === 'zen'
   let lastError = ''
   // Reasoning models (o-series / gpt-5 family) burn completion tokens on hidden
-  // reasoning BEFORE emitting text — give OpenAI a much larger budget so the
+  // reasoning BEFORE emitting text — give them a much larger budget so the
   // JSON survives the thinking phase.
   let tokenBudget = reasoningHeavy ? 32768 : 8192
 
@@ -450,49 +797,42 @@ async function callOpenAICompatible(
       [useMaxCompletionTokens ? 'max_completion_tokens' : 'max_tokens']: tokenBudget,
     }
     if (useJsonFormat) body.response_format = { type: 'json_object' }
+    if (useReasoningEffort) body.reasoning_effort = config.effort
     if (useStream) body.stream = true
 
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
       body: JSON.stringify(body),
+      signal: w.signal,
     })
+    w.connected(res.status)
 
     if (res.ok && useStream && res.body) {
       // SSE stream: accumulate deltas and surface the growing text live
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
       let acc = ''
       let finishReason = ''
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop()!
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed.startsWith('data:')) continue
-          const payload = trimmed.slice(5).trim()
-          if (payload === '[DONE]') continue
-          try {
-            const chunk = JSON.parse(payload)
-            const choice = chunk.choices?.[0]
-            const delta: string | undefined = choice?.delta?.content
-            if (delta) {
-              acc += delta
-              onText!(acc)
-            }
-            if (choice?.finish_reason) finishReason = choice.finish_reason
-          } catch {
-            /* ignore malformed keep-alive lines */
+      await readSse(res.body, w, (payload) => {
+        if (payload === '[DONE]') return
+        try {
+          const chunk = JSON.parse(payload)
+          const choice = chunk.choices?.[0]
+          const delta: string | undefined = choice?.delta?.content
+          if (choice?.delta?.reasoning_content || choice?.delta?.reasoning) w.touch('thinking')
+          if (delta) {
+            acc += delta
+            w.text(acc.length)
+            onText!(acc)
           }
+          if (choice?.finish_reason) finishReason = choice.finish_reason
+        } catch {
+          /* ignore malformed keep-alive lines */
         }
-      }
+      })
       if (acc) return acc
       if (finishReason === 'length' && tokenBudget < 65536) {
         tokenBudget *= 2 // reasoning consumed the whole budget before any output — retry bigger
+        hiccup(config, `reasoning used the whole token budget — retrying with ${tokenBudget}`)
         continue
       }
       throw new Error(
@@ -511,6 +851,7 @@ async function callOpenAICompatible(
       if (refusal) throw new Error(`${config.provider} refused: ${refusal.slice(0, 150)}`)
       if (choice?.finish_reason === 'length' && tokenBudget < 65536) {
         tokenBudget *= 2 // reasoning consumed the whole budget before any output — retry bigger
+        hiccup(config, `reasoning used the whole token budget — retrying with ${tokenBudget}`)
         continue
       }
       if (choice?.finish_reason === 'length') {
@@ -524,19 +865,28 @@ async function callOpenAICompatible(
     lastError = await res.text()
     if (res.status === 400 && useStream && /\bstream\b/i.test(lastError)) {
       useStream = false // endpoint doesn't support streaming — fall back silently
+      hiccup(config, 'endpoint rejected streaming — retrying without it')
       continue
     }
     if (res.status === 400) {
       if (!useMaxCompletionTokens && /max_completion_tokens/.test(lastError)) {
         useMaxCompletionTokens = true // endpoint wants the newer parameter
+        hiccup(config, 'endpoint wants max_completion_tokens — retrying')
         continue
       }
       if (useMaxCompletionTokens && /max_completion_tokens/.test(lastError) && /unsupported|not supported|unknown/i.test(lastError)) {
         useMaxCompletionTokens = false // endpoint only knows the legacy parameter
+        hiccup(config, 'endpoint only knows max_tokens — retrying')
+        continue
+      }
+      if (useReasoningEffort && /reasoning_effort|reasoning/i.test(lastError)) {
+        useReasoningEffort = false // not a reasoning model
+        hiccup(config, 'model has no reasoning effort — retrying without it')
         continue
       }
       if (useJsonFormat && /response_format/.test(lastError)) {
         useJsonFormat = false // model doesn't support JSON mode
+        hiccup(config, 'model has no JSON mode — retrying without it')
         continue
       }
     }
@@ -549,7 +899,8 @@ async function callGemini(
   config: AIConfig,
   systemPrompt: string,
   userPrompt: string,
-  onText?: (fullText: string) => void,
+  onText: ((fullText: string) => void) | undefined,
+  w: CallWatch,
   viaZen = false,
 ): Promise<string> {
   const model = resolvedModel(config)
@@ -567,44 +918,39 @@ async function callGemini(
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 16384 },
     }),
+    signal: w.signal,
   })
+  w.connected(res.status)
   if (!res.ok) throw new Error(`${viaZen ? 'Zen (Gemini)' : 'Gemini'} API error ${res.status}: ${(await res.text()).slice(0, 200)}`)
 
   if (onText && res.body) {
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
     let acc = ''
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop()!
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed.startsWith('data:')) continue
-        try {
-          const chunk = JSON.parse(trimmed.slice(5).trim())
-          const parts: Array<{ text?: string }> = chunk.candidates?.[0]?.content?.parts ?? []
-          const delta = parts.map((p) => p.text ?? '').join('')
-          if (delta) {
-            acc += delta
-            onText(acc)
-          }
-        } catch {
-          /* ignore malformed lines */
+    let finishReason = ''
+    await readSse(res.body, w, (payload) => {
+      try {
+        const chunk = JSON.parse(payload)
+        const candidate = chunk.candidates?.[0]
+        const parts: Array<{ text?: string }> = candidate?.content?.parts ?? []
+        const delta = parts.map((p) => p.text ?? '').join('')
+        if (candidate?.finishReason) finishReason = candidate.finishReason
+        if (delta) {
+          acc += delta
+          w.text(acc.length)
+          onText(acc)
         }
+      } catch {
+        /* ignore malformed lines */
       }
-    }
-    if (!acc) throw new Error('Gemini returned no streamed content')
+    })
+    if (!acc) throw new Error(`Gemini returned no streamed content (finishReason: ${finishReason || 'unknown'})`)
+    if (finishReason && finishReason !== 'STOP') log('warn', `${config.provider} · ${model}`, `finishReason=${finishReason}`)
     return acc
   }
 
   const data = await res.json()
   const parts: Array<{ text?: string }> = data.candidates?.[0]?.content?.parts ?? []
   const text = parts.map((p) => p.text ?? '').join('')
-  if (!text) throw new Error('Gemini returned no text content')
+  if (!text) throw new Error(`Gemini returned no text content (finishReason: ${data.candidates?.[0]?.finishReason ?? 'unknown'})`)
   return text
 }
 
@@ -617,13 +963,15 @@ async function callResponses(
   systemPrompt: string,
   userPrompt: string,
   baseUrl: string,
-  onText?: (fullText: string) => void,
+  onText: ((fullText: string) => void) | undefined,
+  w: CallWatch,
 ): Promise<string> {
   let useJsonFormat = true
+  let useReasoningEffort = true
   let useStream = !!onText
   let lastError = ''
 
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     const body: Record<string, unknown> = {
       model: resolvedModel(config),
       instructions: systemPrompt,
@@ -631,47 +979,41 @@ async function callResponses(
       max_output_tokens: 32768,
     }
     if (useJsonFormat) body.text = { format: { type: 'json_object' } }
+    if (useReasoningEffort) body.reasoning = { effort: config.effort }
     if (useStream) body.stream = true
 
     const res = await fetch(`${baseUrl}/responses`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
       body: JSON.stringify(body),
+      signal: w.signal,
     })
+    w.connected(res.status)
 
     if (res.ok && useStream && res.body) {
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
       let acc = ''
       let incomplete = ''
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop()!
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed.startsWith('data:')) continue
-          try {
-            const event = JSON.parse(trimmed.slice(5).trim())
-            if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
-              acc += event.delta
-              onText!(acc)
-            } else if (event.type === 'response.incomplete') {
-              incomplete = event.response?.incomplete_details?.reason ?? 'unknown'
-            } else if (event.type === 'response.failed' || event.type === 'error') {
-              throw new Error(event.response?.error?.message ?? event.message ?? 'stream failed')
-            }
-          } catch (err) {
-            if (err instanceof SyntaxError) continue // malformed keep-alive line
-            throw err
-          }
+      await readSse(res.body, w, (payload) => {
+        let event
+        try {
+          event = JSON.parse(payload)
+        } catch {
+          return // malformed keep-alive line
         }
-      }
+        if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
+          acc += event.delta
+          w.text(acc.length)
+          onText!(acc)
+        } else if (typeof event.type === 'string' && event.type.startsWith('response.reasoning')) {
+          w.touch('thinking')
+        } else if (event.type === 'response.incomplete') {
+          incomplete = event.response?.incomplete_details?.reason ?? 'unknown'
+        } else if (event.type === 'response.failed' || event.type === 'error') {
+          throw new Error(event.response?.error?.message ?? event.message ?? 'stream failed')
+        }
+      })
       if (acc) return acc
-      throw new Error(`zen returned no streamed content (${incomplete ? `incomplete: ${incomplete}` : 'empty response'})`)
+      throw new Error(`${config.provider} returned no streamed content (${incomplete ? `incomplete: ${incomplete}` : 'empty response'})`)
     }
 
     if (res.ok) {
@@ -683,21 +1025,28 @@ async function callResponses(
         .map((part: { text?: string }) => part.text ?? '')
         .join('')
       if (text) return text
-      throw new Error(`zen returned no message content (status: ${data.status ?? 'unknown'})`)
+      throw new Error(`${config.provider} returned no message content (status: ${data.status ?? 'unknown'})`)
     }
 
     lastError = await res.text()
     if (res.status === 400 && useStream && /\bstream\b/i.test(lastError)) {
       useStream = false
+      hiccup(config, 'endpoint rejected streaming — retrying without it')
+      continue
+    }
+    if (res.status === 400 && useReasoningEffort && /reasoning/i.test(lastError)) {
+      useReasoningEffort = false
+      hiccup(config, 'model has no reasoning effort — retrying without it')
       continue
     }
     if (res.status === 400 && useJsonFormat && /text\.format|json_object|response_format/i.test(lastError)) {
       useJsonFormat = false
+      hiccup(config, 'model has no JSON mode — retrying without it')
       continue
     }
-    break
+    throw new Error(`${config.provider} API error ${res.status}: ${lastError.slice(0, 200)}`)
   }
-  throw new Error(`zen API error: ${lastError.slice(0, 200)}`)
+  throw new Error(`${config.provider} API error: ${lastError.slice(0, 200)}`)
 }
 
 /** Zen fronts several vendors; the model family decides which wire format to speak. */
@@ -705,13 +1054,14 @@ function callZen(
   config: AIConfig,
   systemPrompt: string,
   userPrompt: string,
-  onText?: (fullText: string) => void,
+  onText: ((fullText: string) => void) | undefined,
+  w: CallWatch,
 ): Promise<string> {
   const model = resolvedModel(config)
-  if (model.startsWith('claude-')) return callClaude(config, systemPrompt, userPrompt, onText, true)
-  if (model.startsWith('gemini-')) return callGemini(config, systemPrompt, userPrompt, onText, true)
-  if (/^(gpt-|grok-|muse-)/.test(model)) return callResponses(config, systemPrompt, userPrompt, ZEN_BASE, onText)
-  return callOpenAICompatible(config, systemPrompt, userPrompt, ZEN_BASE, onText)
+  if (model.startsWith('claude-')) return callClaude(config, systemPrompt, userPrompt, onText, w, true)
+  if (model.startsWith('gemini-')) return callGemini(config, systemPrompt, userPrompt, onText, w, true)
+  if (/^(gpt-|grok-|muse-)/.test(model)) return callResponses(config, systemPrompt, userPrompt, ZEN_BASE, onText, w)
+  return callOpenAICompatible(config, systemPrompt, userPrompt, ZEN_BASE, onText, w)
 }
 
 /**
@@ -726,17 +1076,30 @@ export async function callModel(
   onText?: (fullText: string) => void,
 ): Promise<string> {
   if (!config.apiKey.trim()) throw new Error('no API key configured — open settings')
-  switch (config.provider) {
-    case 'claude':
-      return callClaude(config, systemPrompt, userPrompt, onText)
-    case 'openai':
-      return callOpenAICompatible(config, systemPrompt, userPrompt, 'https://api.openai.com/v1', onText)
-    case 'groq':
-      return callOpenAICompatible(config, systemPrompt, userPrompt, 'https://api.groq.com/openai/v1', onText)
-    case 'zen':
-      return callZen(config, systemPrompt, userPrompt, onText)
-    case 'gemini':
-      return callGemini(config, systemPrompt, userPrompt, onText)
+  const w = watchCall(config, !!onText)
+  try {
+    let text: string
+    switch (config.provider) {
+      case 'claude':
+        text = await callClaude(config, systemPrompt, userPrompt, onText, w)
+        break
+      case 'openai':
+        text = await callOpenAICompatible(config, systemPrompt, userPrompt, 'https://api.openai.com/v1', onText, w)
+        break
+      case 'groq':
+        text = await callOpenAICompatible(config, systemPrompt, userPrompt, 'https://api.groq.com/openai/v1', onText, w)
+        break
+      case 'zen':
+        text = await callZen(config, systemPrompt, userPrompt, onText, w)
+        break
+      case 'gemini':
+        text = await callGemini(config, systemPrompt, userPrompt, onText, w)
+        break
+    }
+    w.finish(text.length)
+    return text
+  } catch (err) {
+    throw w.fail(err)
   }
 }
 
@@ -745,6 +1108,30 @@ export async function callModel(
  * removes dangling separators, and balances brackets so the prefix the model
  * has emitted so far can be parsed and rendered mid-stream.
  */
+/** Marks a string the stream cut off in the middle (private-use character, never in real text). */
+const CUT = '\uE000'
+/** Keys whose value must be whole before a node can be trusted ("Table" is a real name, but the model may be writing "TableRow"). */
+const IDENTITY_KEYS = new Set(['id', 'type', 'component'])
+
+/**
+ * After parsing a completed-partial document: remove the cut marker from every string,
+ * and flag each object whose id / type / component was cut off with `__incomplete`.
+ */
+function settleCuts(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(settleCuts)
+  if (typeof value === 'object' && value !== null) {
+    const out: Record<string, unknown> = {}
+    for (const [key, v] of Object.entries(value)) {
+      if (typeof v === 'string' && v.endsWith(CUT)) {
+        out[key] = v.slice(0, -1)
+        if (IDENTITY_KEYS.has(key)) out.__incomplete = true
+      } else out[key] = settleCuts(v)
+    }
+    return out
+  }
+  return value
+}
+
 export function completePartialJson(text: string): unknown | null {
   const start = text.indexOf('{')
   if (start === -1) return null
@@ -765,13 +1152,13 @@ export function completePartialJson(text: string): unknown | null {
     else if (ch === '}' || ch === ']') stack.pop()
   }
   let fixed = s
-  if (inString) fixed += '"'
+  if (inString) fixed += `${CUT}"`
   fixed = fixed.replace(/\s+$/, '')
   if (fixed.endsWith(':')) fixed += 'null'
   else if (fixed.endsWith(',')) fixed = fixed.slice(0, -1)
   for (let i = stack.length - 1; i >= 0; i--) fixed += stack[i] === '{' ? '}' : ']'
   try {
-    return JSON.parse(fixed)
+    return settleCuts(JSON.parse(fixed))
   } catch {
     return null // a partial literal is mid-flight; the next chunk will parse
   }
@@ -791,7 +1178,8 @@ export async function generateValidated<T>(
   config: AIConfig,
   systemPrompt: string,
   userPrompt: string,
-  validate: (raw: unknown) => T,
+  /** `partial` is true for a mid-stream snapshot: the text is cut off, so names and values may be half-written. */
+  validate: (raw: unknown, partial?: boolean) => T,
   onRepair?: (message: string) => void,
   onPartial?: (partial: T) => void,
 ): Promise<T> {
@@ -806,7 +1194,7 @@ export async function generateValidated<T>(
         const raw = completePartialJson(fullText)
         if (raw === null) return
         try {
-          onPartial(validate(raw))
+          onPartial(validate(raw, true))
         } catch {
           /* prefix not yet renderable — wait for more chunks */
         }
@@ -830,6 +1218,7 @@ export async function generateValidated<T>(
     } catch (err) {
       if (attempt >= 2) throw err
       const msg = err instanceof Error ? err.message : String(err)
+      log('warn', 'validate', `${msg.slice(0, 200)} — output was ${text.length} chars, starts: ${JSON.stringify(text.slice(0, 120))}`)
       onRepair?.(`Output failed validation (${msg.slice(0, 90)}) — asking the model to repair it (attempt ${attempt + 2}/3)`)
       text = await callModel(
         config,
@@ -846,7 +1235,10 @@ export async function generateLayout(
   onRepair?: (message: string) => void,
   styleDirective?: string,
   onPartial?: (partial: ValidationResult) => void,
+  /** Compose from the REAL components of this library (shadcn, Relume…). */
+  libraryId?: LibraryId | null,
 ): Promise<ValidationResult> {
-  const systemPrompt = styleDirective ? `${SYSTEM_PROMPT}\n\n${styleDirective}` : SYSTEM_PROMPT
-  return generateValidated(config, systemPrompt, userPrompt, validateLayout, onRepair, onPartial)
+  const lib = getLibrary(libraryId)
+  const systemPrompt = [SYSTEM_PROMPT, lib ? libraryPrompt(lib) : '', styleDirective ?? ''].filter(Boolean).join('\n\n')
+  return generateValidated(config, systemPrompt, userPrompt, (raw, partial) => validateLayout(raw, lib?.id, { partial }), onRepair, onPartial)
 }

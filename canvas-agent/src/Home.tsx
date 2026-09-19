@@ -1,3 +1,4 @@
+import { ThemeToggle } from './ui'
 import { useState } from 'react'
 import { DesignCard } from './DesignModal'
 import { paletteOf, type SavedStyle } from './lab'
@@ -76,7 +77,7 @@ function ProjectCard({ project, styles, onOpen, onDuplicate, onDelete }: Project
           <span className="truncate text-[14px] font-semibold text-zinc-100">{project.name}</span>
           <span className="flex items-center gap-2 truncate font-mono text-[10.5px] text-zinc-500">
             <span className={`size-1.5 shrink-0 rounded-full ${project.page === 'lab' ? 'bg-emerald-400' : 'bg-fuchsia-400'}`} />
-            {project.page === 'lab' ? 'design lab' : 'vocabulary'} · {style ? style.system.name : 'free design'} · {timeAgo(project.updatedAt)}
+            {project.page === 'lab' ? 'style template' : 'handover design'} · {style ? style.system.name : 'free design'} · {timeAgo(project.updatedAt)}
           </span>
         </div>
       </button>
@@ -141,6 +142,7 @@ export default function Home({ projects, styles, storageOk, onNew, onOpen, onDup
           >
             ⚙ model
           </button>
+          <ThemeToggle />
           <button
             type="button"
             onClick={() => onNew(null)}
