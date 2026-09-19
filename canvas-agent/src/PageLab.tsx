@@ -17,7 +17,7 @@ import {
 } from './lab'
 import type { LabState } from './projects'
 import { countTree, findById, insertChild, lastNodeId, patchNode, sleep } from './tree'
-import { AgentActivityDots, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
+import { AgentActivityDots, AgentCursor, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
 
 /* ================================================================== *
  *  Page 2 — Design Lab: no framework vocabulary. The model invents a
@@ -96,6 +96,7 @@ function LabRenderer(props: LabRendererProps) {
 
   const shared = {
     style,
+    'data-node-id': node.id,
     initial: { opacity: 0, y: 10 },
     animate: { opacity: 1, y: 0 },
     transition: { duration: 0.4, ease: [0.21, 0.47, 0.32, 0.98] as const },
@@ -116,22 +117,10 @@ function LabRenderer(props: LabRendererProps) {
     },
   }
 
-  const badge = (isBuilding || isActive) && (
-    <span
-      className={`pointer-events-none absolute -top-5 left-0 z-40 flex items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold text-white shadow-lg ${
-        isBuilding ? 'bg-fuchsia-500' : 'bg-blue-500'
-      }`}
-    >
-      {isBuilding ? (
-        <>
-          <span className="size-1 animate-pulse rounded-full bg-white" /> agent
-        </>
-      ) : (
-        <>
-          {node.label}
-          {node.component && <span className="opacity-70">〈{node.component}{node.variant ? ` · ${node.variant}` : ''}〉</span>}
-        </>
-      )}
+  const badge = isActive && (
+    <span className="pointer-events-none absolute -top-5 left-0 z-40 flex items-center gap-1 whitespace-nowrap rounded bg-blue-500 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-white shadow-lg">
+      {node.label}
+      {node.component && <span className="opacity-70">〈{node.component}{node.variant ? ` · ${node.variant}` : ''}〉</span>}
     </span>
   )
 
@@ -397,6 +386,7 @@ export default function PageLab({
   const [steps, setSteps] = useState<AgentStep[]>([])
   const [doneSummary, setDoneSummary] = useState<string | null>(initial?.doneSummary ?? null)
   const [buildingNodeId, setBuildingNodeId] = useState<string | null>(null)
+  const artboardRef = useRef<HTMLDivElement>(null)
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null)
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null)
   const runIdRef = useRef(0)
@@ -827,7 +817,13 @@ export default function PageLab({
 
         <div className="canvas-backdrop thin-scroll relative flex-1 overflow-auto bg-zinc-900" onClick={() => setActiveNodeId(null)}>
           <div className="flex min-h-full items-start justify-center px-10 pt-24 pb-16">
-            <div className="relative">
+            <div ref={artboardRef} className="relative">
+              <AgentCursor
+                containerRef={artboardRef}
+                targetId={buildingNodeId}
+                active={running && view === 'page'}
+                name={providerMeta(config.provider).label.split(' ')[0]}
+              />
               {running && (
                 <div className="absolute -top-11 right-0 z-30">
                   <AgentActivityDots accent="bg-emerald-500" label={steps.find((s) => s.state === 'active')?.label} />

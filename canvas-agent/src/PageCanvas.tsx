@@ -4,7 +4,7 @@ import { generateLayout, providerMeta, resolvedModel, type AIConfig, type Canvas
 import { paletteOf, vocabularyStyleDirective, type SavedStyle } from './lab'
 import type { CanvasState } from './projects'
 import { countTree, findById, insertChild, lastNodeId, patchNode, sleep } from './tree'
-import { AgentActivityDots, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
+import { AgentActivityDots, AgentCursor, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
 
 /* ================================================================== *
  *  Page 1 — Vocabulary canvas: the model designs inside a safelisted
@@ -77,6 +77,7 @@ function CanvasRenderer(props: RendererProps) {
 
   const shared = {
     className: `relative ${node.classes} ${ring}`,
+    'data-node-id': node.id,
     initial: { opacity: 0, y: 10 },
     animate: { opacity: 1, y: 0 },
     transition: { duration: 0.4, ease: [0.21, 0.47, 0.32, 0.98] as const },
@@ -97,13 +98,6 @@ function CanvasRenderer(props: RendererProps) {
     },
   }
 
-  const agentCursor = isBuilding && (
-    <span className="pointer-events-none absolute -top-5 left-0 z-40 flex items-center gap-1 whitespace-nowrap rounded bg-fuchsia-500 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-white shadow-lg">
-      <span className="size-1 animate-pulse rounded-full bg-white" />
-      agent
-    </span>
-  )
-
   const selectionBadge = isActive && (
     <span className="pointer-events-none absolute -top-5 left-0 z-30 flex items-center gap-1 whitespace-nowrap rounded bg-blue-500 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-white shadow-lg">
       {node.label}
@@ -118,7 +112,6 @@ function CanvasRenderer(props: RendererProps) {
       return (
         <motion.button type="button" {...shared}>
           {node.content}
-          {agentCursor}
           {selectionBadge}
         </motion.button>
       )
@@ -127,14 +120,12 @@ function CanvasRenderer(props: RendererProps) {
         <motion.div {...shared}>
           {node.content}
           {node.content === '' && <span className="opacity-0">·</span>}
-          {agentCursor}
           {selectionBadge}
         </motion.div>
       )
     case 'image':
       return (
         <motion.div {...shared} aria-label={node.label} role="img">
-          {agentCursor}
           {selectionBadge}
         </motion.div>
       )
@@ -143,7 +134,6 @@ function CanvasRenderer(props: RendererProps) {
       return (
         <motion.div {...shared}>
           {children}
-          {agentCursor}
           {selectionBadge}
         </motion.div>
       )
@@ -182,6 +172,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null)
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null)
   const runIdRef = useRef(0)
+  const artboardRef = useRef<HTMLDivElement>(null)
 
   const selectedStyle = styleId ? (styles.find((s) => s.id === styleId) ?? null) : null
 
@@ -482,7 +473,13 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
 
         <div className="canvas-backdrop thin-scroll relative flex-1 overflow-auto bg-zinc-900" onClick={() => setActiveNodeId(null)}>
           <div className="flex min-h-full items-start justify-center px-10 pt-24 pb-16">
-            <div className="relative">
+            <div ref={artboardRef} className="relative">
+              <AgentCursor
+                containerRef={artboardRef}
+                targetId={buildingNodeId}
+                active={running}
+                name={providerMeta(config.provider).label.split(' ')[0]}
+              />
               {running && (
                 <div className="absolute -top-11 right-0 z-30">
                   <AgentActivityDots accent="bg-fuchsia-500" label={steps.find((s) => s.state === 'active')?.label} />
