@@ -288,6 +288,7 @@ export interface CatalogFont {
 /** Families the model may choose. Weights listed are the ones Google serves. */
 export const FONT_CATALOG: CatalogFont[] = [
   { family: 'Inter', kind: 'sans', weights: [300, 400, 500, 600, 700, 800], mood: 'neutral, UI-first' },
+  { family: 'Roboto', kind: 'sans', weights: [300, 400, 500, 700], mood: 'Material, friendly and neutral' },
   { family: 'DM Sans', kind: 'sans', weights: [400, 500, 600, 700], mood: 'friendly geometric' },
   { family: 'Manrope', kind: 'sans', weights: [300, 400, 500, 600, 700, 800], mood: 'modern, calm' },
   { family: 'Poppins', kind: 'sans', weights: [300, 400, 500, 600, 700], mood: 'round geometric, playful' },

@@ -6,7 +6,7 @@ import { paletteOf, vocabularyStyleDirective, type SavedStyle } from './lab'
 import type { CanvasState } from './projects'
 import { countTree, findById, insertChild, lastNodeId, patchNode, sleep } from './tree'
 import { HandoverPanel } from './HandoverPanel'
-import { RealNodeView } from './realui/components'
+import { RealLibraryProvider, renderRealNode } from './realui/components'
 import { getLibrary, type LibraryId } from './realui/catalog'
 import { AgentActivityDots, AgentCursor, AgentError, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
 
@@ -70,16 +70,37 @@ interface RendererProps {
 function CanvasRenderer(props: RendererProps) {
   const { node, activeNodeId, hoverNodeId, buildingNodeId, interactive, onSelect, onHover } = props
   const isActive = interactive && activeNodeId === node.id
-  const isHovered = interactive && hoverNodeId === node.id && !isActive
-  const isBuilding = buildingNodeId === node.id
 
-  const ring = isBuilding
-    ? 'ring-2 ring-fuchsia-400/80'
-    : isActive
-      ? 'ring-2 ring-blue-500'
-      : isHovered
-        ? 'ring-2 ring-blue-400/50'
-        : 'ring-0 ring-transparent'
+  /** The editor outline for any node (selected, hovered, or being built by the agent). */
+  const ringOf = (id: string) => {
+    const active = interactive && activeNodeId === id
+    const hovered = interactive && hoverNodeId === id && !active
+    return buildingNodeId === id
+      ? 'ring-2 ring-fuchsia-400/80'
+      : active
+        ? 'ring-2 ring-blue-500'
+        : hovered
+          ? 'ring-2 ring-blue-400/50'
+          : 'ring-0 ring-transparent'
+  }
+  const handlersOf = (id: string) => ({
+    onClick: (e: React.MouseEvent) => {
+      if (!interactive) return
+      e.stopPropagation()
+      onSelect(id)
+    },
+    onMouseOver: (e: React.MouseEvent) => {
+      if (!interactive) return
+      e.stopPropagation()
+      onHover(id)
+    },
+    onMouseOut: (e: React.MouseEvent) => {
+      if (!interactive) return
+      e.stopPropagation()
+      onHover(null)
+    },
+  })
+  const ring = ringOf(node.id)
 
   const shared = {
     className: `relative ${node.classes} ${ring}`,
@@ -87,21 +108,7 @@ function CanvasRenderer(props: RendererProps) {
     initial: { opacity: 0, y: 10 },
     animate: { opacity: 1, y: 0 },
     transition: { duration: 0.4, ease: [0.21, 0.47, 0.32, 0.98] as const },
-    onClick: (e: React.MouseEvent) => {
-      if (!interactive) return
-      e.stopPropagation()
-      onSelect(node.id)
-    },
-    onMouseOver: (e: React.MouseEvent) => {
-      if (!interactive) return
-      e.stopPropagation()
-      onHover(node.id)
-    },
-    onMouseOut: (e: React.MouseEvent) => {
-      if (!interactive) return
-      e.stopPropagation()
-      onHover(null)
-    },
+    ...handlersOf(node.id),
   }
 
   const selectionBadge = isActive && (
@@ -111,19 +118,16 @@ function CanvasRenderer(props: RendererProps) {
     </span>
   )
 
-  const children = node.children?.map((child) => <CanvasRenderer key={child.id} {...props} node={child} />)
-
   if (node.type === 'component' && props.library) {
-    return (
-      <RealNodeView
-        node={node}
-        library={props.library}
-        ringClass={ring}
-        handlers={{ onClick: shared.onClick, onMouseOver: shared.onMouseOver, onMouseOut: shared.onMouseOut }}
-        kids={children ?? []}
-      />
-    )
+    return renderRealNode(node, {
+      library: props.library,
+      ringClass: (n) => ringOf(n.id),
+      handlers: (n) => handlersOf(n.id),
+      renderPlain: (child) => <CanvasRenderer key={child.id} {...props} node={child} />,
+    })
   }
+
+  const children = node.children?.map((child) => <CanvasRenderer key={child.id} {...props} node={child} />)
 
   switch (node.type) {
     case 'button':
@@ -583,6 +587,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
                 </div>
               ) : (
                 <div className="design-surface contents">
+                <RealLibraryProvider library={tree.library ?? null}>
                 <CanvasRenderer
                   node={tree}
                   library={tree.library ?? null}
@@ -596,6 +601,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
                   }}
                   onHover={setHoverNodeId}
                 />
+                </RealLibraryProvider>
                 </div>
               )}
             </div>

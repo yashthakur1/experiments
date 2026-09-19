@@ -10,8 +10,23 @@ This project uses **free components only**. Nothing here needs a paid plan, a ke
 | class-variance-authority | Variant classes | Apache-2.0 |
 | tailwind-merge, clsx | Class merging | MIT |
 | tw-animate-css | Open/close animations | MIT |
+| @heroui/react, @heroui/styles (v3, open source) | Real components for the HeroUI style | MIT |
+| react-aria-components (under HeroUI) | Accessible behaviour for HeroUI | Apache-2.0 |
+| @mui/material, @emotion/react, @emotion/styled | Real components for the Material style | MIT |
+| antd 6.6.4 and its 61 dependencies (rc-\*, @ant-design/\*, dayjs…) | Real components for the Ant Design style | MIT (checked: every package in its tree is MIT, ISC, BSD or Apache-2.0) |
 | @relume_io/relume-ui 1.3.1 | Real components for the Relume style | **No licence declared** (see below) |
 | @relume_io/relume-tailwind 1.3.0 | Relume design tokens (read once; values copied into `src/index.css` and `src/systems.ts`) | **No licence declared** (see below) |
+
+## Paid tiers that are NOT used
+
+HeroUI Pro, MUI X (Data Grid Pro/Premium, Date Pickers Pro, Charts Pro), Ant Design Pro / ProComponents, Relume's
+paid section library and Tailwind Plus are not installed and not imported. `FREE_MODULES` lists the only import
+paths allowed.
+
+## Halo, Lunaris, Nitro
+
+These three styles have no public component source. They are rebuilt from screenshots as Tailwind approximations and
+are labelled that way in the style picker. They use no third-party component library.
 
 ## Relume
 

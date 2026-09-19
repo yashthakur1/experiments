@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* HeroUI v3: its own stylesheet, layered exactly as its index.css does (without re-importing Tailwind). */
+@import "@heroui/styles/base" layer(base);
+@import "@heroui/styles/components/index.css" layer(components);
+@import "@heroui/styles/themes/default" layer(theme);
+@import "@heroui/styles/utilities";
+@import "@heroui/styles/variants";
+
 /* Real libraries ship their class names inside node_modules; Tailwind must scan them. */
 @source "../node_modules/@relume_io/relume-ui/dist";
 
@@ -56,6 +63,9 @@
 @source inline("{text-md,text-8xl,text-9xl,text-10xl,max-w-xxs,max-w-xxl,shadow-xxsmall,shadow-xsmall,shadow-small,shadow-medium,shadow-large}");
 @source inline("{py,pt,pb}-{28,32}");
 @source inline("px-[5%]");
+
+@source inline("{bg,text,border}-{background,foreground,surface,surface-foreground,surface-secondary,surface-tertiary,overlay,muted,default,default-foreground,accent,accent-foreground,success,success-foreground,warning,warning-foreground,danger,danger-foreground,border,separator}");
+@source inline("{bg,text,border}-{surface,accent,default,success,warning,danger,muted,border}/{10,20,30,40,50,60,70,80,90}");
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -259,6 +269,8 @@ body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes delayed-in { to { opacity: 1; } }
+.delayed-in { opacity: 0; animation: delayed-in 0s 1.5s forwards; }
 
 /* A node fades in when the agent adds it (real components cannot use framer-motion wrappers). */
 @keyframes node-in {
@@ -376,3 +388,63 @@ html[data-theme='light'] {
 }
 
 body { background: var(--color-zinc-950); }
+
+/* ---------- HeroUI: the scope only sets the page colors; its variables come from its own theme ---------- */
+.heroui-scope {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* ---------- Ant Design: the scope maps Ant's default theme tokens onto the shared semantic classes ---------- */
+.antd-scope {
+  --background: #ffffff;
+  --foreground: rgba(0, 0, 0, 0.88);
+  --card: #ffffff;
+  --card-foreground: rgba(0, 0, 0, 0.88);
+  --popover: #ffffff;
+  --popover-foreground: rgba(0, 0, 0, 0.88);
+  --primary: #1677ff;
+  --primary-foreground: #ffffff;
+  --secondary: #f5f5f5;
+  --secondary-foreground: rgba(0, 0, 0, 0.88);
+  --muted: #f5f5f5;
+  --muted-foreground: rgba(0, 0, 0, 0.45);
+  --accent: #e6f4ff;
+  --accent-foreground: #0958d9;
+  --destructive: #ff4d4f;
+  --border: #d9d9d9;
+  --input: #d9d9d9;
+  --ring: #1677ff;
+  color-scheme: light;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  font-size: 14px;
+  line-height: 1.5714285714285714;
+}
+
+/* ---------- Material UI: the scope maps Material's default theme onto the shared semantic classes ---------- */
+.mui-scope {
+  --background: #ffffff;
+  --foreground: rgba(0, 0, 0, 0.87);
+  --card: #ffffff;
+  --card-foreground: rgba(0, 0, 0, 0.87);
+  --popover: #ffffff;
+  --popover-foreground: rgba(0, 0, 0, 0.87);
+  --primary: #1976d2;
+  --primary-foreground: #ffffff;
+  --secondary: #9c27b0;
+  --secondary-foreground: #ffffff;
+  --muted: #f5f5f5;
+  --muted-foreground: rgba(0, 0, 0, 0.6);
+  --accent: #e3f2fd;
+  --accent-foreground: #0d47a1;
+  --destructive: #d32f2f;
+  --border: rgba(0, 0, 0, 0.12);
+  --input: rgba(0, 0, 0, 0.23);
+  --ring: #1976d2;
+  color-scheme: light;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Roboto', 'Helvetica', 'Arial', sans-serif;
+}

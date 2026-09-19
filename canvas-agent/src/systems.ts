@@ -530,6 +530,7 @@ const heroui: DesignSystem = {
     docs: 'https://heroui.com/docs/react',
     backdrop: 'linear-gradient(120deg,#af7763 0%,#c9a89c 42%,#bdc1c8 100%)',
     provenance: 'HeroUI v3 default dark theme: variables.css (OKLCH → hex) and component CSS (button, chip, alert, switch, tabs).',
+    library: 'heroui',
   },
   tokens: {
     color: {
@@ -1431,6 +1432,416 @@ const relume: DesignSystem = {
   }),
 }
 
+
+/* ================================================================== *
+ *  Material  (Material UI default theme, light)
+ *  Values read from createTheme() in @mui/material 9.4.0: palette,
+ *  shape.borderRadius 4, 8px spacing, the elevation shadows and the
+ *  type scale. Real Material UI components are installed in this app.
+ * ================================================================== */
+
+const MUI_SHADOW_1 = '0px 2px 1px -1px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 1px 3px 0px rgba(0,0,0,0.12)'
+const MUI_SHADOW_2 = '0px 3px 1px -2px rgba(0,0,0,0.2), 0px 2px 2px 0px rgba(0,0,0,0.14), 0px 1px 5px 0px rgba(0,0,0,0.12)'
+const MUI_SHADOW_4 = '0px 2px 4px -1px rgba(0,0,0,0.2), 0px 4px 5px 0px rgba(0,0,0,0.14), 0px 1px 10px 0px rgba(0,0,0,0.12)'
+
+const material: DesignSystem = {
+  name: 'Material',
+  philosophy:
+    'Paper and ink. Surfaces sit at defined heights, shadows say how high, and one blue carries every action. Motion and elevation explain what you can touch.',
+  experienceNotes: [
+    'Elevation is the hierarchy: 0 flat, 1 resting cards, 4 app bars, 8 menus, 24 dialogs.',
+    'One primary color (blue 500) for actions; secondary (purple) only for a second accent.',
+    'Buttons are uppercase, medium weight, 4px corners: contained for the main action, outlined or text for the rest.',
+    'Spacing is an 8px grid. Touch targets are at least 48px.',
+    'Type is Roboto: light for very large text, regular for reading, medium for buttons and titles.',
+    'Text is 87% black on white; secondary text is 60%; dividers are 12%.',
+  ],
+  meta: {
+    tagline: 'Material UI default theme',
+    stack: 'React · Emotion · Material UI',
+    install: 'npm i @mui/material @emotion/react @emotion/styled',
+    docs: 'https://mui.com/material-ui/',
+    backdrop: 'linear-gradient(135deg,#e3f2fd 0%,#ffffff 100%)',
+    provenance: 'Read from createTheme() in @mui/material 9.4.0 (MIT core; the paid MUI X packages are not used). Real Material UI components are installed in this app.',
+    library: 'mui',
+  },
+  tokens: {
+    color: {
+      background: '#ffffff',
+      card: '#ffffff',
+      primary: '#1976d2',
+      foreground: 'rgba(0,0,0,0.87)',
+      sidebar: '#f5f5f5',
+      muted: '#f5f5f5',
+      mutedForeground: 'rgba(0,0,0,0.6)',
+      border: 'rgba(0,0,0,0.12)',
+      input: 'rgba(0,0,0,0.23)',
+      primaryForeground: '#ffffff',
+      secondary: '#9c27b0',
+      secondaryForeground: '#ffffff',
+      accent: '#e3f2fd',
+      destructive: '#d32f2f',
+      destructiveText: '#d32f2f',
+      success: '#2e7d32',
+      successSoft: '#edf7ed',
+      successText: '#1e4620',
+      successBorder: '#2e7d32',
+      ring: '#1976d2',
+    },
+    font: {
+      display: '"Roboto", "Helvetica", "Arial", sans-serif',
+      body: '"Roboto", "Helvetica", "Arial", sans-serif',
+      mono: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    },
+    type: {
+      h1: ty(48, 400, 1.167),
+      h2: ty(34, 400, 1.235, '0.00735em'),
+      h3: ty(20, 500, 1.6, '0.0075em'),
+      body: ty(16, 400, 1.5, '0.00938em'),
+      small: ty(14, 400, 1.43, '0.01071em'),
+      caption: ty(12, 400, 1.66, '0.03333em'),
+      overline: ty(12, 400, 2.66, '0.08333em'),
+      stat: ty(34, 400, 1.235, '0.00735em'),
+    },
+    space: SPACE,
+    radius: { sm: '4px', md: '4px', lg: '8px', xl: '12px', full: '9999px' },
+    shadow: { none: 'none', xs: MUI_SHADOW_1, sm: MUI_SHADOW_2, md: MUI_SHADOW_4, ring: '0 0 0 3px rgba(25,118,210,0.4)' },
+  },
+  components: [
+    ...typography(),
+    comp(
+      'Button',
+      'Every clickable action',
+      'Uppercase, 14px medium, padding 6px 16px, 4px corners. contained = solid primary with elevation 2; outlined = 50% primary border; text = plain.',
+      'Request rover',
+      {
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '6px 16px', borderRadius: '$radius.md', border: '0',
+        background: '$color.primary', color: '$color.primaryForeground', ...tstyle('small'), fontWeight: 500, lineHeight: 1.75, letterSpacing: '0.02857em',
+        textTransform: 'uppercase', whiteSpace: 'nowrap', cursor: 'pointer', boxShadow: '$shadow.sm',
+      },
+      {
+        secondary: { background: '$color.secondary', color: '$color.secondaryForeground' },
+        outline: { background: 'transparent', color: '$color.primary', border: '1px solid rgba(25,118,210,0.5)', boxShadow: '$shadow.none' },
+        ghost: { background: 'transparent', color: '$color.primary', boxShadow: '$shadow.none' },
+        destructive: { background: '$color.destructive' },
+        link: { background: 'transparent', color: '$color.primary', boxShadow: '$shadow.none', textTransform: 'none', textDecoration: 'underline' },
+        sm: { padding: '4px 10px', fontSize: '13px' },
+        lg: { padding: '8px 22px', fontSize: '15px' },
+      },
+      `import { Button } from "@mui/material"\n\n<Button variant="contained">Request rover</Button>\n<Button variant="outlined">View missions</Button>\n<Button variant="text">Details</Button>\n<Button variant="contained" color="error">Cancel mission</Button>`,
+    ),
+    comp(
+      'Card',
+      'A raised surface that groups content',
+      'Paper at elevation 1, 4px corners, white. CardHeader and CardContent own their 16px padding.',
+      'Card surface',
+      { display: 'flex', flexDirection: 'column', gap: '$space.md', padding: '$space.md', background: '$color.card', color: '$color.foreground', borderRadius: '$radius.md', boxShadow: '$shadow.xs' },
+      undefined,
+      `import { Card, CardHeader, CardContent } from "@mui/material"\n\n<Card>\n  <CardHeader title="Active rovers" subheader="Across the fleet" />\n  <CardContent>1,280</CardContent>\n</Card>`,
+    ),
+    comp('CardHeader', 'Card title area', 'Title (h6-like) with an optional subheader, 16px padding.', 'Header', { display: 'flex', flexDirection: 'column', gap: '$space.xs' }),
+    comp('CardContent', 'Card body', '16px padding.', 'Content', { display: 'flex', flexDirection: 'column', gap: '$space.sm' }),
+    comp(
+      'Input',
+      'Outlined text field',
+      'Outlined TextField: 56px high, 1px border at 23% black, 4px corners, label floats above.',
+      '⌕  Search…',
+      { display: 'flex', alignItems: 'center', minHeight: '56px', padding: '16px 14px', borderRadius: '$radius.md', border: '1px solid $color.input', background: 'transparent', color: '$color.mutedForeground', ...tstyle('body') },
+      undefined,
+      `import { TextField } from "@mui/material"\n\n<TextField label="Search" variant="outlined" />`,
+    ),
+    comp(
+      'Badge',
+      'Chip (small label)',
+      '32px high, fully rounded, 8% black fill, 13px text.',
+      'New',
+      { display: 'inline-flex', alignItems: 'center', width: 'fit-content', height: '32px', padding: '0 12px', borderRadius: '$radius.full', background: 'rgba(0,0,0,0.08)', color: '$color.foreground', fontSize: '13px' },
+      {
+        secondary: { background: '$color.accent', color: '#0d47a1' },
+        outline: { background: 'transparent', border: '1px solid rgba(0,0,0,0.23)' },
+        destructive: { background: '$color.destructive', color: '#ffffff' },
+      },
+      `import { Chip } from "@mui/material"\n\n<Chip label="+8%" color="success" size="small" />`,
+    ),
+    comp(
+      'Alert',
+      'Inline message',
+      'Standard Alert: tinted background, matching dark text, 6px 16px padding, 4px corners.',
+      'Heads up',
+      { display: 'flex', alignItems: 'flex-start', gap: '$space.md', padding: '6px 16px', borderRadius: '$radius.md', background: '$color.successSoft', color: '$color.successText', ...tstyle('small') },
+      { destructive: { background: '#fdeded', color: '#5f2120' } },
+      `import { Alert, AlertTitle } from "@mui/material"\n\n<Alert severity="success">\n  <AlertTitle>Mission approved</AlertTitle>\n  Your request to rent the Curiosity-X rover…\n</Alert>`,
+    ),
+    comp('AlertTitle', 'Alert headline', 'Medium weight, one line.', 'Title', { ...tstyle('body'), fontWeight: 500, color: 'inherit' }),
+    comp('AlertDescription', 'Alert supporting text', 'Body text in the alert color.', 'Description', { ...tstyle('small'), color: 'inherit' }),
+    comp(
+      'Switch',
+      'On/off toggle (track)',
+      '34×14 track, 20px thumb that lifts off it. Off = 38% black track; on = 50% primary track.',
+      '',
+      { display: 'flex', alignItems: 'center', width: '34px', height: '14px', padding: '0', borderRadius: '$radius.full', background: 'rgba(0,0,0,0.38)', cursor: 'pointer', flexShrink: 0 },
+      { checked: { background: 'rgba(25,118,210,0.5)', justifyContent: 'flex-end' } },
+      `import { Switch } from "@mui/material"\n\n<Switch defaultChecked />`,
+    ),
+    comp('SwitchThumb', 'Switch knob', '20px circle with elevation 1; primary when on.', '', { width: '20px', height: '20px', borderRadius: '$radius.full', background: '#fafafa', boxShadow: '$shadow.xs' }, { checked: { background: '$color.primary' } }),
+    comp(
+      'Tabs',
+      'Tab bar',
+      'Row of Tab, 48px high, with a 2px primary indicator under the selected one.',
+      'Tabs',
+      { display: 'inline-flex', alignItems: 'stretch', alignSelf: 'flex-start', borderBottom: '1px solid $color.border' },
+      undefined,
+      `import { Tabs, Tab } from "@mui/material"\n\n<Tabs value="all">\n  <Tab label="All" value="all" />\n  <Tab label="Active" value="active" />\n</Tabs>`,
+    ),
+    comp(
+      'Tab',
+      'Single tab',
+      'Uppercase 14px medium, padding 12px 16px; selected is primary with a 2px underline.',
+      'Overview',
+      { display: 'inline-flex', alignItems: 'center', minHeight: '48px', padding: '12px 16px', borderBottom: '2px solid transparent', background: 'transparent', color: '$color.mutedForeground', ...tstyle('small'), fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.02857em', cursor: 'pointer' },
+      { active: { borderBottom: '2px solid $color.primary', color: '$color.primary' } },
+    ),
+    comp('Sidebar', 'Navigation drawer', 'Permanent Drawer, 240px wide, light grey with a right divider.', 'Sidebar', {
+      display: 'flex', flexDirection: 'column', gap: '$space.xs', width: '240px', flexShrink: 0, padding: '$space.sm 0', background: '$color.sidebar', borderRight: '1px solid $color.border',
+    }),
+    comp('NavLabel', 'List subheader', 'Overline-style label, 60% black.', 'Operations', { padding: '8px 16px', color: '$color.mutedForeground', ...tstyle('overline'), textTransform: 'uppercase' }),
+    comp(
+      'NavItem',
+      'List item button',
+      '8px 16px padding, 14px text; selected gets an 8% primary tint.',
+      'Dashboard',
+      { display: 'flex', alignItems: 'center', gap: '16px', padding: '8px 16px', background: 'transparent', color: '$color.foreground', ...tstyle('small'), cursor: 'pointer', textAlign: 'left' },
+      { active: { background: 'rgba(25,118,210,0.08)', color: '$color.primary', fontWeight: 500 } },
+    ),
+    comp('LogoMark', 'Brand mark', 'Primary rounded square, 32px.', '◉', {
+      display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '$radius.md', background: '$color.primary', color: '$color.primaryForeground', fontSize: '16px',
+    }),
+    comp('Avatar', 'User identity', '40px circle, grey 400 with white initials.', 'KM', {
+      display: 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', borderRadius: '$radius.full', background: '#bdbdbd', color: '#ffffff', ...tstyle('body'), flexShrink: 0,
+    }),
+    comp(
+      'TableRow',
+      'Table row (grid)',
+      'Bottom border in grey 200; head cells are medium weight.',
+      'Row',
+      { display: 'grid', alignItems: 'center', padding: '16px', borderBottom: '1px solid rgba(224,224,224,1)', ...tstyle('small') },
+      { head: { fontWeight: 500 } },
+      `import { Table, TableHead, TableRow, TableCell, TableBody } from "@mui/material"\n\n<TableRow>\n  <TableCell>Olympus survey</TableCell>\n  <TableCell>Curiosity-X</TableCell>\n</TableRow>`,
+    ),
+  ],
+  page: fleetPage({
+    brand: 'Acme',
+    logo: '◉',
+    iconSide: 'left',
+    badge: { neutral: 'outline', up: 'secondary', down: 'destructive' },
+    button: { secondary: 'secondary', outline: 'outline', ghost: 'ghost', danger: 'destructive' },
+  }),
+}
+
+
+/* ================================================================== *
+ *  Ant Design  (default theme, light)
+ *  Values read from theme.getDesignToken() in antd 6.6.4: colorPrimary
+ *  #1677ff, borderRadius 6, 14px text, 32px controls, the shadow set.
+ *  Real Ant Design components are installed in this app.
+ * ================================================================== */
+
+const ANT_SHADOW_XS = '0 1px 2px 0 rgba(0,0,0,0.03), 0 1px 6px -1px rgba(0,0,0,0.02), 0 2px 4px 0 rgba(0,0,0,0.02)'
+const ANT_SHADOW_SM = '0 1px 2px 0 rgba(0,0,0,0.05), 0 1px 6px -1px rgba(0,0,0,0.03), 0 2px 4px 0 rgba(0,0,0,0.03)'
+const ANT_SHADOW_MD = '0 6px 16px 0 rgba(0,0,0,0.08), 0 3px 6px -4px rgba(0,0,0,0.12), 0 9px 28px 8px rgba(0,0,0,0.05)'
+
+const antd: DesignSystem = {
+  name: 'Ant Design',
+  philosophy:
+    'Natural, certain, meaningful, growing. A dense, orderly language for enterprise products: every control is 32px, every gap sits on a 4px rhythm, one blue means "act".',
+  experienceNotes: [
+    'Controls are 32px high (24 small, 40 large) with 6px corners, so forms and toolbars line up on one baseline.',
+    'One primary blue (#1677ff) for the single main action; default buttons are white with a grey border.',
+    'Status has fixed colors: green success, gold warning, red error, blue info. Tags and alerts use their light tint.',
+    'Type is 14px on a 22px line. Headings step 20 / 24 / 30 / 38 and are 600 weight.',
+    'Data is dense: tables use 16px cell padding, a grey header, and hairline row dividers.',
+    'Surfaces are white on a #f5f5f5 page. Depth is a border first, a soft shadow only for floating layers.',
+  ],
+  meta: {
+    tagline: 'Enterprise UI design language',
+    stack: 'React · Ant Design',
+    install: 'npm i antd',
+    docs: 'https://ant.design/components/overview',
+    backdrop: 'linear-gradient(135deg,#e6f4ff 0%,#ffffff 100%)',
+    provenance: 'Read from theme.getDesignToken() in antd 6.6.4 (MIT; ProComponents are not used). Real Ant Design components are installed in this app.',
+    library: 'antd',
+  },
+  tokens: {
+    color: {
+      background: '#ffffff',
+      card: '#ffffff',
+      primary: '#1677ff',
+      foreground: 'rgba(0,0,0,0.88)',
+      sidebar: '#ffffff',
+      muted: '#f5f5f5',
+      mutedForeground: 'rgba(0,0,0,0.45)',
+      border: '#d9d9d9',
+      input: '#d9d9d9',
+      primaryForeground: '#ffffff',
+      secondary: '#ffffff',
+      secondaryForeground: 'rgba(0,0,0,0.88)',
+      accent: '#e6f4ff',
+      destructive: '#ff4d4f',
+      destructiveText: '#ff4d4f',
+      success: '#52c41a',
+      successSoft: '#f6ffed',
+      successText: '#389e0d',
+      successBorder: '#b7eb8f',
+      ring: '#1677ff',
+    },
+    font: {
+      display: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      body: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      mono: "'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace",
+    },
+    type: {
+      h1: ty(38, 600, 1.21),
+      h2: ty(30, 600, 1.27),
+      h3: ty(20, 600, 1.4),
+      body: ty(14, 400, 1.57),
+      small: ty(14, 400, 1.57),
+      caption: ty(12, 400, 1.66),
+      overline: ty(12, 500, 1.66, '0.04em'),
+      stat: ty(30, 400, 1.27),
+    },
+    space: SPACE,
+    radius: { sm: '4px', md: '6px', lg: '8px', xl: '8px', full: '9999px' },
+    shadow: { none: 'none', xs: ANT_SHADOW_XS, sm: ANT_SHADOW_SM, md: ANT_SHADOW_MD, ring: '0 0 0 2px rgba(5,145,255,0.1)' },
+  },
+  components: [
+    ...typography(),
+    comp(
+      'Button',
+      'Every clickable action',
+      '32px high, 15px horizontal padding, 6px corners. primary = solid blue; default = white with a grey border; text and link have no chrome; danger = red.',
+      'Request rover',
+      {
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', height: '32px', padding: '0 15px', borderRadius: '$radius.md',
+        border: '1px solid $color.primary', background: '$color.primary', color: '$color.primaryForeground', ...tstyle('body'), whiteSpace: 'nowrap', cursor: 'pointer',
+        boxShadow: '0 2px 0 rgba(5,145,255,0.1)',
+      },
+      {
+        secondary: { background: '$color.secondary', color: '$color.secondaryForeground', border: '1px solid $color.border', boxShadow: '0 2px 0 rgba(0,0,0,0.02)' },
+        outline: { background: 'transparent', color: '$color.primary', border: '1px solid $color.primary', boxShadow: '$shadow.none' },
+        ghost: { background: 'transparent', color: '$color.foreground', border: '1px solid transparent', boxShadow: '$shadow.none' },
+        destructive: { background: '$color.destructive', border: '1px solid $color.destructive', boxShadow: '0 2px 0 rgba(255,38,5,0.06)' },
+        link: { background: 'transparent', color: '$color.primary', border: '1px solid transparent', boxShadow: '$shadow.none' },
+        sm: { height: '24px', padding: '0 7px', fontSize: '14px' },
+        lg: { height: '40px', padding: '0 15px', fontSize: '16px' },
+      },
+      `import { Button } from "antd"\n\n<Button type="primary">Request rover</Button>\n<Button>Export log</Button>\n<Button type="dashed">Add</Button>\n<Button type="text">Details</Button>\n<Button type="primary" danger>Cancel mission</Button>`,
+    ),
+    comp(
+      'Card',
+      'A bordered surface that groups content',
+      'White, 1px hairline border at #f0f0f0, 8px corners; a 24px body and an optional title bar with a divider.',
+      'Card surface',
+      { display: 'flex', flexDirection: 'column', gap: '$space.md', padding: '$space.lg', background: '$color.card', color: '$color.foreground', borderRadius: '$radius.lg', border: '1px solid #f0f0f0' },
+      undefined,
+      `import { Card, Statistic } from "antd"\n\n<Card title="Active rovers">\n  <Statistic value="1,280" />\n</Card>`,
+    ),
+    comp(
+      'Input',
+      'Text field',
+      '32px high, 11px horizontal padding, 1px #d9d9d9 border, 6px corners. Focus turns the border blue with a soft ring.',
+      'Search…',
+      { display: 'flex', alignItems: 'center', height: '32px', padding: '4px 11px', borderRadius: '$radius.md', border: '1px solid $color.input', background: '$color.background', color: '$color.mutedForeground', ...tstyle('body') },
+      undefined,
+      `import { Input } from "antd"\n\n<Input placeholder="Search…" />`,
+    ),
+    comp(
+      'Badge',
+      'Tag (small label)',
+      'Inline, 22px high, 7px padding, 4px corners, 12px text. Filled with the status tint and a matching 1px border.',
+      'New',
+      { display: 'inline-flex', alignItems: 'center', width: 'fit-content', height: '22px', padding: '0 7px', borderRadius: '$radius.sm', background: '#fafafa', border: '1px solid #d9d9d9', color: '$color.foreground', fontSize: '12px', lineHeight: '20px' },
+      {
+        secondary: { background: '$color.accent', border: '1px solid #91caff', color: '#0958d9' },
+        outline: { background: 'transparent', border: '1px solid #d9d9d9' },
+        destructive: { background: '#fff2f0', border: '1px solid #ffccc7', color: '#cf1322' },
+      },
+      `import { Tag } from "antd"\n\n<Tag color="success">+8%</Tag>\n<Tag color="error">-2%</Tag>\n<Tag color="processing">Active</Tag>`,
+    ),
+    comp(
+      'Alert',
+      'Inline message',
+      'Tinted background with a matching 1px border, 8px 12px padding, 6px corners, an icon and a title.',
+      'Heads up',
+      { display: 'flex', alignItems: 'flex-start', gap: '$space.sm', padding: '8px 12px', borderRadius: '$radius.md', background: '$color.successSoft', border: '1px solid $color.successBorder', color: '$color.foreground', ...tstyle('body') },
+      { destructive: { background: '#fff2f0', border: '1px solid #ffccc7' } },
+      `import { Alert } from "antd"\n\n<Alert type="success" showIcon title="Mission approved" description="Your request to rent the Curiosity-X rover…" />`,
+    ),
+    comp('AlertTitle', 'Alert headline', 'Body size, foreground color.', 'Title', { ...tstyle('body'), color: '$color.foreground' }),
+    comp('AlertDescription', 'Alert supporting text', 'Body text at 65% black.', 'Description', { ...tstyle('body'), color: '$color.mutedForeground' }),
+    comp(
+      'Switch',
+      'On/off toggle (track)',
+      '44×22 track, 18px white knob. Off = 25% black track; on = primary blue.',
+      '',
+      { display: 'flex', alignItems: 'center', width: '44px', height: '22px', padding: '2px', borderRadius: '$radius.full', background: 'rgba(0,0,0,0.25)', cursor: 'pointer', flexShrink: 0 },
+      { checked: { background: '$color.primary', justifyContent: 'flex-end' } },
+      `import { Switch } from "antd"\n\n<Switch defaultChecked />`,
+    ),
+    comp('SwitchThumb', 'Switch knob', '18px white circle with a soft shadow.', '', { width: '18px', height: '18px', borderRadius: '$radius.full', background: '#ffffff', boxShadow: '0 2px 4px 0 rgba(0,35,11,0.2)' }),
+    comp(
+      'Tabs',
+      'Tab bar',
+      'A row of tabs over a 1px divider. 46px high, 16px gap, a 2px blue ink bar under the active tab.',
+      'Tabs',
+      { display: 'inline-flex', alignItems: 'stretch', gap: '32px', alignSelf: 'flex-start', borderBottom: '1px solid #f0f0f0' },
+      undefined,
+      `import { Tabs } from "antd"\n\n<Tabs defaultActiveKey="all" items={[\n  { key: "all", label: "All", children: "Everything" },\n  { key: "active", label: "Active", children: "Running missions" },\n]} />`,
+    ),
+    comp(
+      'Tab',
+      'Single tab',
+      '14px text with 12px vertical padding; the active tab is blue with a 2px underline.',
+      'Overview',
+      { display: 'inline-flex', alignItems: 'center', padding: '12px 0', borderBottom: '2px solid transparent', background: 'transparent', color: '$color.foreground', ...tstyle('body'), cursor: 'pointer' },
+      { active: { borderBottom: '2px solid $color.primary', color: '$color.primary' } },
+    ),
+    comp('Sidebar', 'Side menu', 'Menu in a 200px white sider with a right hairline.', 'Sidebar', {
+      display: 'flex', flexDirection: 'column', gap: '4px', width: '208px', flexShrink: 0, padding: '$space.sm', background: '$color.sidebar', borderRight: '1px solid #f0f0f0',
+    }),
+    comp('NavLabel', 'Menu group title', '12px, 45% black.', 'Operations', { padding: '8px 12px 4px', color: '$color.mutedForeground', ...tstyle('caption') }),
+    comp(
+      'NavItem',
+      'Menu item',
+      '40px high, 4px margin, 6px corners. Selected = #e6f4ff background with blue text.',
+      'Dashboard',
+      { display: 'flex', alignItems: 'center', gap: '10px', height: '40px', padding: '0 12px', borderRadius: '$radius.md', background: 'transparent', color: '$color.foreground', ...tstyle('body'), cursor: 'pointer', textAlign: 'left' },
+      { active: { background: '$color.accent', color: '$color.primary' } },
+    ),
+    comp('LogoMark', 'Brand mark', 'Blue rounded square, 32px.', '◉', {
+      display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '$radius.md', background: '$color.primary', color: '$color.primaryForeground', fontSize: '16px',
+    }),
+    comp('Avatar', 'User identity', '32px circle, grey #ccc with white initials.', 'KM', {
+      display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '$radius.full', background: '#cccccc', color: '#ffffff', ...tstyle('body'), flexShrink: 0,
+    }),
+    comp(
+      'TableRow',
+      'Table row (grid)',
+      '16px cell padding, #f0f0f0 divider; the head row has a #fafafa background and 600 weight.',
+      'Row',
+      { display: 'grid', alignItems: 'center', padding: '16px', borderBottom: '1px solid #f0f0f0', ...tstyle('body') },
+      { head: { fontWeight: 600, background: '#fafafa' } },
+      `import { Table } from "antd"\n\n<Table\n  columns={[{ title: "Mission", dataIndex: "mission" }, { title: "Rover", dataIndex: "rover" }]}\n  dataSource={[{ key: "1", mission: "Olympus survey", rover: "Curiosity-X" }]}\n  pagination={false}\n/>`,
+    ),
+  ],
+  page: fleetPage({
+    brand: 'Acme',
+    logo: '◉',
+    iconSide: 'left',
+    badge: { neutral: 'outline', up: 'secondary', down: 'destructive' },
+    button: { secondary: 'secondary', outline: 'outline', ghost: 'ghost', danger: 'destructive' },
+  }),
+}
+
 /* ------------------------------------------------------------------ */
 
 const BUILTIN_DATE = '2026-09-19T00:00:00.000Z'
@@ -1439,6 +1850,8 @@ export const BUILTIN_STYLES: SavedStyle[] = [
   { id: 'builtin-shadcn', savedAt: BUILTIN_DATE, system: shadcn, builtin: true },
   { id: 'builtin-relume', savedAt: BUILTIN_DATE, system: relume, builtin: true },
   { id: 'builtin-heroui', savedAt: BUILTIN_DATE, system: heroui, builtin: true },
+  { id: 'builtin-mui', savedAt: BUILTIN_DATE, system: material, builtin: true },
+  { id: 'builtin-antd', savedAt: BUILTIN_DATE, system: antd, builtin: true },
   { id: 'builtin-halo', savedAt: BUILTIN_DATE, system: halo, builtin: true },
   { id: 'builtin-lunaris', savedAt: BUILTIN_DATE, system: lunaris, builtin: true },
   { id: 'builtin-nitro', savedAt: BUILTIN_DATE, system: nitro, builtin: true },

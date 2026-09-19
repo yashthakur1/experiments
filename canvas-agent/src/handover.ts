@@ -1,6 +1,6 @@
 import type { CanvasNode } from './ai'
 import type { DesignSystem } from './lab'
-import { componentSpec, getLibrary, type ComponentSpec, type LibraryId } from './realui/catalog'
+import { componentSpec, getLibrary, type ComponentSpec, type LibraryId, type PropValue } from './realui/catalog'
 
 /* ================================================================== *
  *  Handover — everything a developer needs from a finished design:
@@ -116,7 +116,8 @@ function textOut(content: string, lang: 'jsx' | 'html') {
 }
 
 /** One prop as JSX: strings quoted, numbers and booleans in braces / bare. */
-function propAttr(key: string, value: string | number | boolean): string {
+function propAttr(key: string, value: PropValue): string {
+  if (Array.isArray(value)) return `${key}={${JSON.stringify(value)}}`
   if (typeof value === 'string') return `${key}="${escapeAttr(value)}"`
   if (typeof value === 'number') return `${key}={${value}}`
   return value ? key : `${key}={false}`
@@ -167,7 +168,7 @@ function libraryHeader(ctx: EmitCtx): string {
   if (!lib) return ''
   const specs = [...ctx.used.values()]
   const byModule = new Map<string, string[]>()
-  for (const c of specs) byModule.set(c.module, [...(byModule.get(c.module) ?? []), c.name])
+  for (const c of specs) byModule.set(c.module, [...(byModule.get(c.module) ?? []), c.importName ?? c.name])
   if (ctx.icons.size) byModule.set('lucide-react', [...ctx.icons])
   const imports = [...byModule].map(([mod, names]) => `import { ${[...new Set(names)].sort().join(', ')} } from "${mod}"`)
   const notes = lib.setupNotes([...specs, ...(ctx.icons.size ? [{ name: 'Icon' } as ComponentSpec] : [])]).map((l) => `// ${l}`)

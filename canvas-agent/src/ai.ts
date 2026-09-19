@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { log, tick } from './log'
-import { getLibrary, libraryPrompt, type LibraryId } from './realui/catalog'
+import { getLibrary, libraryPrompt, type LibraryId, type PropRecord, type PropValue } from './realui/catalog'
 
 /* ================================================================== *
  *  AI layer — schema, strict system instruction, class sanitizer,
@@ -24,7 +24,7 @@ export interface CanvasNode {
   /** type 'component' only: the catalog name, e.g. "Button". */
   component?: string
   /** type 'component' only: props from the catalog. */
-  props?: Record<string, string | number | boolean>
+  props?: Record<string, PropValue>
   /** Root node only: which real library the whole tree renders with. */
   library?: LibraryId
 }
@@ -317,6 +317,9 @@ const ALLOWED_CLASS_PATTERNS: RegExp[] = [
   // shadcn/ui semantic colors (defined by the .shadcn-scope theme)
   /^(?:bg|text|border)-(?:background|foreground|card|card-foreground|muted|muted-foreground|primary|primary-foreground|secondary|secondary-foreground|accent|accent-foreground|destructive|border|input)$/,
   /^(?:bg|text|border)-(?:background|foreground|card|muted|muted-foreground|primary|secondary|accent|destructive|border)\/(?:10|20|30|40|50|60|70|80|90)$/,
+  // HeroUI colors (defined by the .heroui-scope theme)
+  /^(?:bg|text|border)-(?:background|foreground|surface|surface-foreground|surface-secondary|surface-tertiary|overlay|muted|default|default-foreground|accent|accent-foreground|success|success-foreground|warning|warning-foreground|danger|danger-foreground|border|separator|field)$/,
+  /^(?:bg|text|border)-(?:surface|accent|default|success|warning|danger|muted|border)\/(?:10|20|30|40|50|60|70|80|90)$/,
   // Relume role colors (defined by the .relume-scope theme)
   /^bg-background-(?:primary|secondary|tertiary|alternative|success|error)$/,
   /^text-text-(?:primary|secondary|alternative|success|error)$/,
@@ -368,6 +371,7 @@ const MAX_NODES = 90
 const MAX_DEPTH = 6
 /** Real components nest deeper by design: Tabs › TabsContent › Table › TableBody › TableRow › TableCell. */
 const MAX_DEPTH_REAL = 10
+const MAX_RECORDS = 30
 
 export interface ValidationResult {
   layout: GeneratedLayout
@@ -401,9 +405,28 @@ export function validateLayout(raw: unknown, libraryId?: LibraryId | null, opts:
     throw new Error(`response has no "sections" array (top-level keys: ${Object.keys(obj).join(', ') || 'none'})`)
   }
 
+  /** A list of flat rows: plain values only, capped. Every row gets a `key` (React and Ant Design need one). */
+  const cleanRecords = (value: unknown): PropRecord[] | null => {
+    if (!Array.isArray(value)) return null
+    const list: PropRecord[] = []
+    for (const row of value.slice(0, MAX_RECORDS)) {
+      if (typeof row !== 'object' || row === null || Array.isArray(row)) continue
+      const clean: PropRecord = {}
+      for (const [k, v] of Object.entries(row as Record<string, unknown>).slice(0, 12)) {
+        if (typeof v === 'string') clean[k] = v.slice(0, 400)
+        else if (typeof v === 'number' && Number.isFinite(v)) clean[k] = v
+        else if (typeof v === 'boolean') clean[k] = v
+      }
+      if (Object.keys(clean).length === 0) continue
+      if (clean.key === undefined) clean.key = String(list.length + 1)
+      list.push(clean)
+    }
+    return list
+  }
+
   /** Keeps only props the catalog lists, with values of the right kind. */
   const cleanProps = (specProps: NonNullable<import('./realui/catalog').ComponentSpec['props']>, given: unknown) => {
-    const out: Record<string, string | number | boolean> = {}
+    const out: Record<string, PropValue> = {}
     if (typeof given !== 'object' || given === null) return out
     for (const [key, value] of Object.entries(given as Record<string, unknown>)) {
       const spec = specProps[key]
@@ -421,6 +444,9 @@ export function validateLayout(raw: unknown, libraryId?: LibraryId | null, opts:
         if (Number.isFinite(n)) out[key] = n
       } else if (spec.kind === 'boolean') {
         out[key] = value === true || value === 'true'
+      } else if (spec.kind === 'records') {
+        const list = cleanRecords(value)
+        if (list) out[key] = list
       }
     }
     return out
@@ -469,6 +495,7 @@ export function validateLayout(raw: unknown, libraryId?: LibraryId | null, opts:
       }
       const node: CanvasNode = { id, type: 'component', component: spec.name, label, classes }
       const props = cleanProps(spec.props ?? {}, n.props)
+      if (spec.autoId && !props.id) props.id = id // React Aria collections need an id
       if (Object.keys(props).length) node.props = props
       if ((spec.takes === 'text' || spec.takes === 'both') && typeof n.content === 'string') node.content = n.content
       if (spec.takes === 'children' || spec.takes === 'both') node.children = kidsOf(n.children, [...ancestors, spec.name])
