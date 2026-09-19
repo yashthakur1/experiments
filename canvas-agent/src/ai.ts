@@ -1256,6 +1256,48 @@ export async function generateValidated<T>(
   }
 }
 
+/** What the model needs to change an existing design instead of drawing a new one. */
+export interface RevisionContext {
+  design: { frameLabel: string; frameClasses: string; sections: CanvasNode[] }
+  /** Earlier requests on this design, oldest first. */
+  earlier: string[]
+  /** The node the user has selected: the change is most likely about it. */
+  focus?: { id: string; label: string } | null
+}
+
+/** A node as compact JSON for the model: empty fields left out. */
+function compactNode(n: CanvasNode): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: n.id, type: n.type }
+  if (n.component) out.component = n.component
+  out.label = n.label
+  if (n.props && Object.keys(n.props).length) out.props = n.props
+  if (n.classes) out.classes = n.classes
+  if (n.content) out.content = n.content
+  if (n.children?.length) out.children = n.children.map(compactNode)
+  return out
+}
+
+const REVISION_PROMPT = `REVISION MODE
+The user already has a design on the canvas. You get its CURRENT DESIGN as JSON and a CHANGE REQUEST. Return the COMPLETE updated design in the same output shape (frameLabel, frameClasses, sections). Not a diff, not only the new part.
+- Make the requested change and nothing else. Keep every other node exactly as it is: same id, type, label, classes, props, content and order.
+- Keep the ids of the nodes you keep. Give new nodes new unique ids.
+- "Add X" means add it (append, or insert where it belongs). It does not mean redesign. "Remove X" means remove it. "Change X" means edit only X.
+- Keep the same visual language: the same colors, fonts, spacing rhythm and, in real-component mode, the same library.
+- The section count (2–5) and node count (25–60) limits do not apply. The design may grow up to about 90 nodes in total.
+- If the user points at a node (POINTED AT), the request is about that node and what is inside it, unless the text clearly says otherwise.`
+
+function revisionUserPrompt(request: string, rev: RevisionContext): string {
+  const design = JSON.stringify({ frameLabel: rev.design.frameLabel, frameClasses: rev.design.frameClasses, sections: rev.design.sections.map(compactNode) })
+  return [
+    `CURRENT DESIGN:\n${design}`,
+    rev.earlier.length ? `EARLIER REQUESTS (oldest first):\n${rev.earlier.map((r, i) => `${i + 1}. ${r}`).join('\n')}` : '',
+    rev.focus ? `POINTED AT: ${rev.focus.id} (${rev.focus.label})` : '',
+    `CHANGE REQUEST: ${request}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
 export async function generateLayout(
   config: AIConfig,
   userPrompt: string,
@@ -1264,8 +1306,11 @@ export async function generateLayout(
   onPartial?: (partial: ValidationResult) => void,
   /** Compose from the REAL components of this library (shadcn, Relume…). */
   libraryId?: LibraryId | null,
+  /** Change the design that is already on the canvas, instead of drawing a new one. */
+  revision?: RevisionContext | null,
 ): Promise<ValidationResult> {
   const lib = getLibrary(libraryId)
-  const systemPrompt = [SYSTEM_PROMPT, lib ? libraryPrompt(lib) : '', styleDirective ?? ''].filter(Boolean).join('\n\n')
-  return generateValidated(config, systemPrompt, userPrompt, (raw, partial) => validateLayout(raw, lib?.id, { partial }), onRepair, onPartial)
+  const systemPrompt = [SYSTEM_PROMPT, lib ? libraryPrompt(lib) : '', styleDirective ?? '', revision ? REVISION_PROMPT : ''].filter(Boolean).join('\n\n')
+  const prompt = revision ? revisionUserPrompt(userPrompt, revision) : userPrompt
+  return generateValidated(config, systemPrompt, prompt, (raw, partial) => validateLayout(raw, lib?.id, { partial }), onRepair, onPartial)
 }

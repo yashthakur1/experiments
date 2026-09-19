@@ -7,10 +7,22 @@ import type { DesignSystem } from './lab'
  *  localStorage; a full or blocked store never breaks the app.
  * ================================================================== */
 
+/** The design as it was before a change, so a change can be undone. */
+export interface CanvasSnapshot {
+  tree: CanvasNode | null
+  instruction: string | null
+  doneSummary: string | null
+  turns: string[]
+}
+
 export interface CanvasState {
   tree: CanvasNode | null
   instruction: string | null
   doneSummary: string | null
+  /** Every request made on this design, oldest first (the chain of changes). */
+  turns?: string[]
+  /** Earlier versions, newest last. Capped. */
+  history?: CanvasSnapshot[]
 }
 
 export interface LabState {

@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import * as Lucide from 'lucide-react'
+import { LANG_ICONS } from './langIcons'
 import type { ComponentDef, DesignSystem } from './lab'
 import { nodeStyle, resolveStyle } from './lab'
 import {
@@ -73,7 +73,7 @@ export function useGoogleFonts(fonts: FontSpec[] | undefined): Record<string, 'l
 
 /** One lucide glyph, drawn with the language's icon rules. */
 export function LangIcon({ name, spec, size, color, style }: { name: string; spec: IconSpec; size?: number; color?: string; style?: CSSProperties }) {
-  const Glyph = (Lucide as unknown as Record<string, React.ComponentType<Record<string, unknown>>>)[name] ?? Lucide.Circle
+  const Glyph = LANG_ICONS[name] ?? LANG_ICONS.Circle
   const px = size ?? spec.size
   const glyph = <Glyph size={px} strokeWidth={spec.stroke} strokeLinecap={spec.cap === 'round' ? 'round' : 'butt'} strokeLinejoin={spec.cap === 'round' ? 'round' : 'miter'} color={color ?? 'currentColor'} />
   if (spec.container === 'none') return <span style={{ display: 'inline-flex', ...style }}>{glyph}</span>

@@ -1,0 +1,3 @@
+/* HeroUI's component styles, in the chunk that needs them. @reference gives its @apply rules the theme without re-emitting it. */
+@reference "../../index.css";
+@import "@heroui/styles/components/index.css" layer(components);

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { paletteOf, type SavedStyle } from './lab'
+import { getLibrary } from './realui/catalog'
+import { preloadLibrary } from './realui/components'
 import type { ProjectPage } from './projects'
 import { LabStatic, ScaledFrame } from './SystemPreview'
 
@@ -21,6 +23,30 @@ interface DesignCardProps {
   radio?: boolean
 }
 
+/**
+ * Says how a style is built. "real" = the actual component library is installed (real components, real imports).
+ * "tailwind" = an approximation drawn with Tailwind classes.
+ */
+export function BuildTag({ style, className = '' }: { style: SavedStyle; className?: string }) {
+  const lib = getLibrary(style.system.meta?.library)
+  return lib ? (
+    <span
+      title={`Built with the real ${lib.label} components (real imports on export). Loaded on demand.`}
+      className={`inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-950/80 px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-wider text-emerald-300 shadow ${className}`}
+    >
+      <span aria-hidden="true" className="size-1.5 rounded-full bg-emerald-400" />
+      real · {lib.label}
+    </span>
+  ) : (
+    <span
+      title="Approximated with Tailwind classes. It does not use a real component library."
+      className={`inline-flex items-center rounded-full border border-zinc-600/70 bg-zinc-950/80 px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-wider text-zinc-400 shadow ${className}`}
+    >
+      tailwind
+    </span>
+  )
+}
+
 export function DesignCard({ style, selected = false, onClick, radio = false }: DesignCardProps) {
   const title = style ? style.system.name : 'Free design'
   const subtitle = style
@@ -31,6 +57,9 @@ export function DesignCard({ style, selected = false, onClick, radio = false }: 
     <button
       type="button"
       onClick={onClick}
+      // warm the library while the pointer is over the card, so opening the project is faster
+      onMouseEnter={() => preloadLibrary(style?.system.meta?.library)}
+      onFocus={() => preloadLibrary(style?.system.meta?.library)}
       role={radio ? 'radio' : undefined}
       aria-checked={radio ? selected : undefined}
       className={`group relative flex flex-col overflow-hidden rounded-xl border bg-zinc-900/60 text-left transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${
@@ -63,6 +92,8 @@ export function DesignCard({ style, selected = false, onClick, radio = false }: 
           </div>
         </div>
       )}
+
+      {style && <BuildTag style={style} className="absolute left-2.5 top-2.5 z-10" />}
 
       {selected && (
         <span className="absolute right-2.5 top-2.5 flex size-6 items-center justify-center rounded-full bg-sky-500 text-[12px] font-bold text-white shadow-lg">

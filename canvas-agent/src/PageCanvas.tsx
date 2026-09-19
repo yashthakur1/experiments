@@ -3,10 +3,10 @@ import { motion } from 'framer-motion'
 import { abortActiveCalls, componentStats, explainError, generateLayout, providerMeta, resolvedModel, type AIConfig, type CanvasNode, type ErrorReport, type ValidationResult } from './ai'
 import { subscribeLog } from './log'
 import { paletteOf, vocabularyStyleDirective, type SavedStyle } from './lab'
-import type { CanvasState } from './projects'
-import { countTree, findById, insertChild, lastNodeId, patchNode, sleep } from './tree'
+import type { CanvasSnapshot, CanvasState } from './projects'
+import { countTree, diffTrees, findById, insertChild, lastNodeId, patchNode, sleep } from './tree'
 import { HandoverPanel } from './HandoverPanel'
-import { RealLibraryProvider, renderRealNode } from './realui/components'
+import { preloadLibrary, RealLibraryProvider, renderRealNode } from './realui/components'
 import { getLibrary, type LibraryId } from './realui/catalog'
 import { AgentActivityDots, AgentCursor, AgentError, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
 
@@ -166,6 +166,17 @@ function CanvasRenderer(props: RendererProps) {
  *  Page component
  * ------------------------------------------------------------------ */
 
+/** Suggestions once a design exists: changes to it, not new designs. */
+const FOLLOWUP_PROMPTS = [
+  'Add a pricing section with three plans',
+  'Add an FAQ section at the bottom',
+  'Make the headline bigger and add a second button',
+  'Tighten the spacing and make the layout denser',
+]
+
+const FRAME_PREFIX = 'flex flex-col w-[1200px] rounded-xl overflow-hidden shadow-2xl '
+const MAX_HISTORY = 5
+
 const EXAMPLE_PROMPTS = [
   'A dark analytics dashboard for a crypto exchange',
   'A warm landing page for an artisan coffee roaster',
@@ -188,6 +199,12 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
   const [running, setRunning] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [instruction, setInstruction] = useState<string | null>(initial?.instruction ?? null)
+  // The chain: every request made on this design, and earlier versions for undo.
+  const [turns, setTurns] = useState<string[]>(initial?.turns ?? (initial?.instruction ? [initial.instruction] : []))
+  const [history, setHistory] = useState<CanvasSnapshot[]>(initial?.history ?? [])
+  const [mode, setMode] = useState<'edit' | 'new'>('edit')
+  const [revisingNow, setRevisingNow] = useState(false)
+  const preRunRef = useRef<CanvasSnapshot | null>(null)
   const [steps, setSteps] = useState<AgentStep[]>([])
   const [doneSummary, setDoneSummary] = useState<string | null>(initial?.doneSummary ?? null)
   const [buildingNodeId, setBuildingNodeId] = useState<string | null>(null)
@@ -200,6 +217,9 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
   const runningRef = useRef(false)
 
   const selectedStyle = styleId ? (styles.find((s) => s.id === styleId) ?? null) : null
+  // Start loading the style's real component library now, so the first design does not wait for it.
+  const styleLibrary = selectedStyle?.system.meta?.library ?? null
+  useEffect(() => preloadLibrary(styleLibrary), [styleLibrary])
 
   const pushStatus = useCallback((label: string) => {
     setSteps((prev) => [
@@ -243,14 +263,24 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
         openConfig()
         return
       }
+      // With a design on the canvas, a new request CHANGES it. "Start over" (mode "new") draws a fresh one.
+      const revising = tree !== null && mode === 'edit'
+      const before = tree
+      const snapshot: CanvasSnapshot | null = tree ? { tree, instruction, doneSummary, turns } : null
+      const nextTurns = revising ? [...turns, trimmed] : [trimmed]
+      preRunRef.current = snapshot
       const myRun = ++runIdRef.current
       setRunning(true)
-      setTree(null)
-      setActiveNodeId(null)
+      setRevisingNow(revising)
+      if (!revising) {
+        setTree(null)
+        setActiveNodeId(null)
+      }
       setHoverNodeId(null)
       setBuildingNodeId(null)
       setDoneSummary(null)
       setInstruction(trimmed)
+      setTurns(nextTurns)
       setSteps([])
       setError(null)
       setHandoverOpen(false)
@@ -259,8 +289,10 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
       const styled = styleId ? (styles.find((s) => s.id === styleId) ?? null) : null
 
       const lib = getLibrary(styled?.system.meta?.library)
+      const focusNode = revising && activeNodeId && activeNodeId !== 'root' && before ? findById(before, activeNodeId) : null
       pushStatus(
-        `Contacting ${providerMeta(config.provider).label.split(' ')[0].toLowerCase()} · ${model}${
+        `${revising ? 'Revising the design' : 'Contacting'} ${providerMeta(config.provider).label.split(' ')[0].toLowerCase()} · ${model}${
+          focusNode ? ` — about “${focusNode.label}”` : ''}${
           lib ? ` — composing with the real ${lib.label} components` : styled ? ` — approximating “${styled.system.name}” with Tailwind` : ''
         }`,
       )
@@ -288,23 +320,43 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
           (partial) => {
             // live: render each streamed snapshot the moment it parses
             if (runIdRef.current !== myRun) return
+            const t = toTree(partial)
+            if (revising) {
+              // the old design stays on screen; it is swapped for the new one in one step when the model is done
+              tickStatus(`${countTree(t)} nodes written`)
+              return
+            }
             if (!streamed) {
               streamed = true
               pushStatus('Streaming design onto canvas — live')
             }
-            const t = toTree(partial)
             setTree(t)
             setBuildingNodeId(lastNodeId(t))
           },
           lib?.id,
+          revising && before
+            ? {
+                design: { frameLabel: before.label, frameClasses: before.classes.replace(FRAME_PREFIX, '').replace(lib?.scopeClass ?? '\u0000', '').trim(), sections: before.children ?? [] },
+                earlier: turns,
+                focus: focusNode ? { id: focusNode.id, label: focusNode.label } : null,
+              }
+            : null,
         )
       } catch (err) {
         if (runIdRef.current !== myRun) return
-        failStatus(`Generation failed — ${err instanceof Error ? err.message : String(err)}`)
+        failStatus(`${revising ? 'Change' : 'Generation'} failed — ${err instanceof Error ? err.message : String(err)}`)
         setError(explainError(config, err))
         setBuildingNodeId(null)
         setRunning(false)
-        onPersist({ tree: null, instruction: trimmed, doneSummary: null })
+        setRevisingNow(false)
+        if (revising && snapshot) {
+          // the design on the canvas is untouched: put the chain back as it was
+          setTurns(snapshot.turns)
+          setInstruction(snapshot.instruction)
+          setDoneSummary(snapshot.doneSummary)
+        } else {
+          onPersist({ tree: null, instruction: trimmed, doneSummary: null, turns: nextTurns, history })
+        }
         return
       }
       if (runIdRef.current !== myRun) return
@@ -318,7 +370,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
       }
 
       let finalTree: CanvasNode | null = null
-      if (streamed) {
+      if (streamed || revising) {
         // canvas already reflects the stream — commit the fully validated tree
         finalTree = toTree(result)
         setTree(finalTree)
@@ -358,22 +410,57 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
       if (lib && stats.components < 8) {
         pushStatus(`⚠ Only ${stats.components} real ${lib.label} component${stats.components === 1 ? '' : 's'} in ${stats.total} nodes — the model drew most of it as plain blocks. Try again or pick a stronger model.`)
       }
-      const summary = `Done — ${total} nodes${lib ? ` (${stats.components} real ${lib.label} components)` : ''} · ${model} · ${secs}s${streamed ? ' · streamed live' : ''}`
+      const change = revising ? diffTrees(before, finalTree) : null
+      const changeText = change ? (change.added + change.removed + change.edited === 0 ? 'No visible change (try saying it another way)' : `Changed — ${change.added} new, ${change.removed} removed, ${change.edited} edited`) : ''
+      const summary = revising
+        ? `${changeText} · ${total} nodes · ${model} · ${secs}s`
+        : `Done — ${total} nodes${lib ? ` (${stats.components} real ${lib.label} components)` : ''} · ${model} · ${secs}s${streamed ? ' · streamed live' : ''}`
+      const nextHistory = snapshot ? [...history, snapshot].slice(-MAX_HISTORY) : history
+      setHistory(nextHistory)
+      // a selection that no longer exists (the model removed the node) is dropped
+      if (finalTree && activeNodeId && !findById(finalTree, activeNodeId)) setActiveNodeId(null)
       setDoneSummary(summary)
       setRunning(false)
+      setRevisingNow(false)
+      setMode('edit')
+      if (revising) setPrompt('')
       setHandoverOpen(true)
-      onPersist({ tree: finalTree, instruction: trimmed, doneSummary: summary })
+      onPersist({ tree: finalTree, instruction: trimmed, doneSummary: summary, turns: nextTurns, history: nextHistory })
     },
-    [config, running, openConfig, pushStatus, failStatus, styleId, styles, onPersist],
+    [config, running, openConfig, pushStatus, tickStatus, failStatus, styleId, styles, onPersist, tree, mode, turns, history, instruction, doneSummary, activeNodeId],
   )
 
   const stopRun = useCallback(() => {
     ++runIdRef.current // must come first: the aborted call's catch checks it
     abortActiveCalls()
     setRunning(false)
+    setRevisingNow(false)
     setBuildingNodeId(null)
     failStatus('Stopped by you')
+    // a stopped change leaves the design as it was
+    const before = preRunRef.current
+    if (before) {
+      setTurns(before.turns)
+      setInstruction(before.instruction)
+      setDoneSummary(before.doneSummary)
+    }
   }, [failStatus])
+
+  const undo = useCallback(() => {
+    const previous = history[history.length - 1]
+    if (!previous || running) return
+    const rest = history.slice(0, -1)
+    setTree(previous.tree)
+    setInstruction(previous.instruction)
+    setDoneSummary(previous.doneSummary)
+    setTurns(previous.turns)
+    setHistory(rest)
+    setActiveNodeId(null)
+    setHoverNodeId(null)
+    setError(null)
+    setSteps([])
+    onPersist({ tree: previous.tree, instruction: previous.instruction, doneSummary: previous.doneSummary, turns: previous.turns, history: rest })
+  }, [history, running, onPersist])
 
   const clearCanvas = useCallback(() => {
     ++runIdRef.current
@@ -387,11 +474,15 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
     setBuildingNodeId(null)
     setActiveNodeId(null)
     setHoverNodeId(null)
-    onPersist({ tree: null, instruction: null, doneSummary: null })
+    setTurns([])
+    setHistory([])
+    setMode('edit')
+    onPersist({ tree: null, instruction: null, doneSummary: null, turns: [], history: [] })
   }, [onPersist])
 
   const activeNode = tree && activeNodeId ? findById(tree, activeNodeId) : null
   const interactive = !running && tree !== null
+  const editing = tree !== null && mode === 'edit'
   const meta = providerMeta(config.provider)
 
   return (
@@ -421,7 +512,24 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
 
         {/* Prompt input */}
         <div className="flex flex-col gap-2 px-4 py-4">
-          <p className="px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">Instruction</p>
+          <div className="flex items-center justify-between gap-2 px-1">
+            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">{editing ? 'Change this design' : 'Instruction'}</p>
+            {tree !== null && !running && (
+              <span role="group" aria-label="What the next request does" className="flex overflow-hidden rounded-md border border-zinc-800 font-mono text-[10px]">
+                {(['edit', 'new'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    aria-pressed={mode === m}
+                    onClick={() => setMode(m)}
+                    className={`px-2 py-0.5 transition-colors ${mode === m ? 'bg-fuchsia-500/15 text-fuchsia-200' : 'text-zinc-500 hover:text-zinc-300'}`}
+                  >
+                    {m === 'edit' ? 'change it' : 'start over'}
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
           <button
             type="button"
             disabled={running}
@@ -451,7 +559,13 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runPrompt(prompt)
             }}
             rows={3}
-            placeholder="Describe the UI to generate — subject, mood, light or dark…"
+            placeholder={
+              editing
+                ? activeNode
+                  ? `Change “${activeNode.label}” — or anything else on the page…`
+                  : 'What should change? “Add a pricing section”, “make the hero shorter”, “swap the copy to Spanish”…'
+                : 'Describe the UI to generate — subject, mood, light or dark…'
+            }
             className="thin-scroll resize-none rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-fuchsia-500/60"
           />
           <button
@@ -466,8 +580,10 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
           >
             {running ? (
               <>
-                <DotSpinner className="bg-zinc-400" /> generating…
+                <DotSpinner className="bg-zinc-400" /> {revisingNow ? 'changing…' : 'generating…'}
               </>
+            ) : editing ? (
+              <>✦ Apply change</>
             ) : (
               <>✦ Generate on canvas</>
             )}
@@ -481,8 +597,15 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
               ■ Stop
             </button>
           )}
+          {editing && activeNode && !running && (
+            <p className="flex items-center gap-1.5 px-1 font-mono text-[10px] text-fuchsia-300">
+              <span aria-hidden="true">◎</span>
+              <span className="min-w-0 truncate">pointing at “{activeNode.label}”: the change starts there</span>
+              <button type="button" onClick={() => setActiveNodeId(null)} className="shrink-0 text-zinc-500 hover:text-zinc-200" aria-label="Stop pointing at this element">✕</button>
+            </p>
+          )}
           <div className="flex flex-wrap gap-1.5">
-            {EXAMPLE_PROMPTS.map((p) => (
+            {(editing ? FOLLOWUP_PROMPTS : EXAMPLE_PROMPTS).map((p) => (
               <button
                 key={p}
                 type="button"
@@ -494,6 +617,16 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
               </button>
             ))}
           </div>
+          {history.length > 0 && !running && (
+            <button
+              type="button"
+              onClick={undo}
+              title="Go back to the design before the last request"
+              className="self-start rounded-md px-2 py-1 font-mono text-[10px] text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-zinc-100"
+            >
+              ↶ undo last request ({history.length})
+            </button>
+          )}
           {tree !== null && !running && (
             <button
               type="button"
@@ -510,6 +643,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
           <p className="px-5 pt-3 pb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">Agent activity</p>
           <AgentFeed
             instruction={instruction}
+            earlier={turns.slice(0, -1)}
             steps={steps}
             doneSummary={doneSummary}
             running={running}
@@ -552,7 +686,12 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
 
         <div className="canvas-backdrop thin-scroll relative flex-1 overflow-auto bg-zinc-900" onClick={() => setActiveNodeId(null)}>
           <div className="flex min-h-full items-start px-10 pt-24 pb-16">
-            <div ref={artboardRef} className="relative mx-auto">
+            <div ref={artboardRef} className={`relative mx-auto transition-opacity duration-300 ${revisingNow ? 'pointer-events-none opacity-60' : ''}`}>
+              {revisingNow && (
+                <span className="absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-fuchsia-500/50 bg-zinc-950/90 px-3 py-1 font-mono text-[11px] text-fuchsia-200 shadow-lg">
+                  <DotSpinner /> applying your change…
+                </span>
+              )}
               <AgentCursor
                 containerRef={artboardRef}
                 targetId={buildingNodeId}

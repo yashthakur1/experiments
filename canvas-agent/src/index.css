@@ -1,9 +1,9 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* HeroUI v3: its own stylesheet, layered exactly as its index.css does (without re-importing Tailwind). */
+/* HeroUI v3: its own stylesheet, layered exactly as its index.css does (without re-importing Tailwind).
+   The ~400 KB of component styles are NOT here: they load with the HeroUI chunk (src/realui/libs/heroui.css). */
 @import "@heroui/styles/base" layer(base);
-@import "@heroui/styles/components/index.css" layer(components);
 @import "@heroui/styles/themes/default" layer(theme);
 @import "@heroui/styles/utilities";
 @import "@heroui/styles/variants";

@@ -37,4 +37,36 @@ export function lastNodeId(node: TreeShape): string {
   return cursor.id
 }
 
+interface DiffShape extends TreeShape {
+  label?: string
+  classes?: string
+  content?: string
+  component?: string
+  props?: unknown
+  children?: DiffShape[]
+}
+
+/** What a change did, by node id: how many nodes are new, gone or edited. */
+export function diffTrees(before: DiffShape | null, after: DiffShape | null): { added: number; removed: number; edited: number } {
+  const index = (root: DiffShape | null) => {
+    const map = new Map<string, string>()
+    const walk = (n: DiffShape) => {
+      map.set(n.id, JSON.stringify([n.label, n.classes, n.content, n.component, n.props, (n.children ?? []).map((c) => c.id)]))
+      n.children?.forEach(walk)
+    }
+    if (root) walk(root)
+    return map
+  }
+  const a = index(before)
+  const b = index(after)
+  let added = 0
+  let edited = 0
+  for (const [id, sig] of b) {
+    if (!a.has(id)) added++
+    else if (a.get(id) !== sig) edited++
+  }
+  const removed = [...a.keys()].filter((id) => !b.has(id)).length
+  return { added, removed, edited }
+}
+
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))

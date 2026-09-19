@@ -327,9 +327,11 @@ interface FeedProps {
   doneSummary: string | null
   running: boolean
   emptyHint: string
+  /** Requests made before the current one on the same design. */
+  earlier?: string[]
 }
 
-export function AgentFeed({ instruction, steps, doneSummary, running, emptyHint }: FeedProps) {
+export function AgentFeed({ instruction, steps, doneSummary, running, emptyHint, earlier = [] }: FeedProps) {
   const feedRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = feedRef.current
@@ -342,7 +344,14 @@ export function AgentFeed({ instruction, steps, doneSummary, running, emptyHint 
         <p className="px-1 text-[11px] leading-relaxed text-zinc-600">{emptyHint}</p>
       ) : (
         <>
+          {earlier.map((turn, i) => (
+            <div key={i} className="ml-6 flex items-start gap-2 rounded-lg rounded-tr-sm border border-zinc-800 bg-zinc-900/40 px-3 py-1.5 text-[11.5px] text-zinc-500">
+              <span className="mt-px font-mono text-[10px] text-emerald-600">✓ {i + 1}</span>
+              <span className="min-w-0 break-words">{turn}</span>
+            </div>
+          ))}
           <div className="ml-6 rounded-lg rounded-tr-sm border border-zinc-700/60 bg-zinc-800/60 px-3 py-2 text-[12px] text-zinc-200">
+            {earlier.length > 0 && <span className="mr-1.5 font-mono text-[10px] text-fuchsia-400">{earlier.length + 1}</span>}
             {instruction}
           </div>
           <div className="space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2.5">

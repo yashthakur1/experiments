@@ -1,3 +1,4 @@
+import { BuildTag } from './DesignModal'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { abortActiveCalls, explainError, providerMeta, resolvedModel, type AIConfig, type ErrorReport } from './ai'
@@ -1142,6 +1143,7 @@ export default function PageLab({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="min-w-0 truncate text-[12px] font-medium text-zinc-200">{saved.system.name}</span>
+                  {saved.builtin && <BuildTag style={saved} className="shrink-0 !px-1.5 !py-px !text-[8.5px]" />}
                   <span className="flex shrink-0 items-center gap-1.5">
                     <button
                       type="button"
