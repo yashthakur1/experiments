@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CanvasNode } from './ai'
 import { componentSpec, getLibrary } from './realui/catalog'
+import { SCENE_KINDS } from './imageArt'
 import {
   collectTokens,
   componentName,
@@ -25,7 +26,20 @@ import {
 
 type Tab = 'inspect' | 'code' | 'tokens'
 
+/** Controls for the pictures in the design (drawn stand-ins by default, real ones on click). */
+export interface PictureControls {
+  /** Real pictures need the Gemini provider and a key. */
+  canGenerate: boolean
+  busy: Record<string, boolean>
+  errors: Record<string, string>
+  onGenerate: (id: string) => void
+  onGenerateAll: () => void
+  onClear: (id: string) => void
+  onArt: (id: string, art: string) => void
+}
+
 interface Props {
+  pictures?: PictureControls
   tree: CanvasNode
   selected: CanvasNode | null
   /** The element that wraps the rendered artboard (values are read from it). */
@@ -33,7 +47,7 @@ interface Props {
   onClose: () => void
 }
 
-export function HandoverPanel({ tree, selected, artboard, onClose }: Props) {
+export function HandoverPanel({ tree, selected, artboard, onClose, pictures }: Props) {
   const [tab, setTab] = useState<Tab>('inspect')
   const [note, setNote] = useState<string | null>(null)
   const noteTimer = useRef<number | undefined>(undefined)
@@ -74,7 +88,7 @@ export function HandoverPanel({ tree, selected, artboard, onClose }: Props) {
       </header>
 
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
-        {tab === 'inspect' && <InspectTab tree={tree} selected={selected} artboard={artboard} copy={copy} />}
+        {tab === 'inspect' && <InspectTab tree={tree} selected={selected} artboard={artboard} copy={copy} pictures={pictures} />}
         {tab === 'code' && <CodeTab tree={tree} copy={copy} />}
         {tab === 'tokens' && <TokensTab tree={tree} artboard={artboard} copy={copy} />}
       </div>
@@ -94,7 +108,99 @@ const SectionTitle = ({ children }: { children: React.ReactNode }) => (
 
 /* ------------------------------ Inspect ------------------------------ */
 
-function InspectTab({ tree, selected, artboard, copy }: { tree: CanvasNode; selected: CanvasNode | null; artboard: Props['artboard']; copy: CopyFn }) {
+const countPictures = (n: CanvasNode): { total: number; real: number } => {
+  const own = n.type === 'image' && (n.art || n.prompt || n.alt || n.src) ? { total: 1, real: n.src ? 1 : 0 } : { total: 0, real: 0 }
+  return (n.children ?? []).reduce((acc, c) => ({ total: acc.total + countPictures(c).total, real: acc.real + countPictures(c).real }), own)
+}
+
+const countIcons = (n: CanvasNode): number => (n.type === 'icon' ? 1 : 0) + (n.children ?? []).reduce((sum, c) => sum + countIcons(c), 0)
+
+/** What the design uses: fonts, icons, pictures. Shown when nothing is selected. */
+function DesignAssets({ tree, pictures }: { tree: CanvasNode; pictures?: PictureControls }) {
+  const pics = countPictures(tree)
+  const icons = countIcons(tree)
+  const anyBusy = pictures ? Object.values(pictures.busy).some(Boolean) : false
+  return (
+    <div className="mx-4 mb-4 flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 font-mono text-[11px] text-zinc-400">
+      <p className="uppercase tracking-[0.16em] text-zinc-500">This design uses</p>
+      <p>
+        fonts · <span className="text-zinc-200">{tree.fonts ? `${tree.fonts.heading} + ${tree.fonts.body}` : tree.library ? 'the library’s own font' : 'system fonts'}</span>
+      </p>
+      <p>
+        icons · <span className={icons ? 'text-zinc-200' : 'text-amber-400'}>{icons}</span>
+      </p>
+      <p>
+        pictures · <span className={pics.total ? 'text-zinc-200' : 'text-amber-400'}>{pics.total}</span>
+        {pics.total > 0 && <span> ({pics.real} generated, {pics.total - pics.real} drawn stand-ins)</span>}
+      </p>
+      {(icons === 0 || pics.total === 0) && <p className="text-amber-400/90">Ask in the box on the left: “add images and icons wherever they belong”.</p>}
+      {pictures && pics.total > pics.real && (
+        <button
+          type="button"
+          disabled={!pictures.canGenerate || anyBusy}
+          onClick={pictures.onGenerateAll}
+          title={pictures.canGenerate ? 'Uses your Gemini image quota: each picture is billed by Google' : 'Needs the Gemini provider and a key'}
+          className="rounded-md border border-fuchsia-500/50 px-2.5 py-1.5 text-left text-fuchsia-200 transition-colors hover:bg-fuchsia-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {anyBusy ? 'Generating pictures…' : `✦ Generate ${pics.total - pics.real} real picture${pics.total - pics.real === 1 ? '' : 's'} with Gemini`}
+        </button>
+      )}
+      {pictures && !pictures.canGenerate && pics.total > pics.real && <p className="text-zinc-600">Real pictures need the Gemini provider and a key. The drawn stand-ins are free.</p>}
+    </div>
+  )
+}
+
+/** The picture controls for a selected image node. */
+function PictureSection({ node, pictures }: { node: CanvasNode; pictures: PictureControls }) {
+  const busy = pictures.busy[node.id]
+  const error = pictures.errors[node.id]
+  return (
+    <div className="mx-4 mt-3 flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 font-mono text-[11px] text-zinc-400">
+      <p className="uppercase tracking-[0.16em] text-zinc-500">Picture</p>
+      <p>
+        now · <span className="text-zinc-200">{node.src ? 'generated with Gemini' : `drawn stand-in (${node.art ?? 'auto'})`}</span>
+      </p>
+      {(node.prompt || node.alt) && <p className="leading-relaxed text-zinc-500">“{node.prompt ?? node.alt}”</p>}
+      {!node.src && (
+        <label className="flex items-center gap-2">
+          <span className="text-zinc-500">drawing</span>
+          <select
+            value={node.art ?? ''}
+            onChange={(e) => pictures.onArt(node.id, e.target.value)}
+            className="min-w-0 flex-1 rounded border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-zinc-200"
+          >
+            <option value="">auto (from the description)</option>
+            {SCENE_KINDS.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          disabled={!pictures.canGenerate || busy}
+          onClick={() => pictures.onGenerate(node.id)}
+          title={pictures.canGenerate ? 'Uses your Gemini image quota: billed by Google' : 'Needs the Gemini provider and a key'}
+          className="rounded-md border border-fuchsia-500/50 px-2.5 py-1.5 text-fuchsia-200 transition-colors hover:bg-fuchsia-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy ? 'Generating…' : node.src ? '↻ Generate again' : '✦ Generate real picture'}
+        </button>
+        {node.src && (
+          <button type="button" onClick={() => pictures.onClear(node.id)} className="rounded-md border border-zinc-800 px-2.5 py-1.5 text-zinc-300 transition-colors hover:border-zinc-600">
+            Back to drawing
+          </button>
+        )}
+      </div>
+      {!pictures.canGenerate && <p className="text-zinc-600">Real pictures need the Gemini provider and a key.</p>}
+      {error && <p className="break-words text-rose-400">⚠ {error}</p>}
+    </div>
+  )
+}
+
+function InspectTab({ tree, selected, artboard, copy, pictures }: { tree: CanvasNode; selected: CanvasNode | null; artboard: Props['artboard']; copy: CopyFn; pictures?: PictureControls }) {
   const [spec, setSpec] = useState<ElementSpec | null>(null)
 
   useEffect(() => {
@@ -108,10 +214,13 @@ function InspectTab({ tree, selected, artboard, copy }: { tree: CanvasNode; sele
 
   if (!selected) {
     return (
-      <p className="px-4 py-6 text-[12px] leading-relaxed text-zinc-500">
-        Click any element on the canvas. You get its Tailwind classes, its real sizes and colors in pixels and hex, a CSS block, and a
-        code snippet to copy.
-      </p>
+      <div>
+        <p className="px-4 py-6 text-[12px] leading-relaxed text-zinc-500">
+          Click any element on the canvas. You get its Tailwind classes, its real sizes and colors in pixels and hex, a CSS block, and a
+          code snippet to copy.
+        </p>
+        <DesignAssets tree={tree} pictures={pictures} />
+      </div>
     )
   }
 
@@ -121,6 +230,13 @@ function InspectTab({ tree, selected, artboard, copy }: { tree: CanvasNode; sele
         <span className="text-[13px] font-semibold text-zinc-100">{selected.label}</span>
         <span className="font-mono text-[10px] text-zinc-500">{`<${selected.type}>`}</span>
       </div>
+
+      {selected.type === 'image' && pictures && <PictureSection node={selected} pictures={pictures} />}
+      {selected.type === 'icon' && (
+        <p className="mx-4 mt-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 font-mono text-[11px] text-zinc-400">
+          icon · <span className="text-zinc-200">{selected.icon}</span> (lucide, free). Ask for a change: “use a different icon here”.
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-1.5 px-4 pt-3">
         <button type="button" onClick={() => copy(toSnippet(selected, tree.library ?? null), 'JSX snippet')} className="rounded-md border border-zinc-800 px-2 py-1 font-mono text-[10.5px] text-zinc-300 transition-colors hover:border-zinc-600">

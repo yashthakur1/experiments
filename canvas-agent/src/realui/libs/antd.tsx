@@ -1,5 +1,7 @@
 import type { ElementType, ReactNode } from 'react'
 import * as Antd from 'antd'
+import { fontStack } from '../../language'
+import type { DesignFonts } from '../../ai'
 import { Icon } from './icon'
 import type { LoadedLibrary } from './types'
 
@@ -10,8 +12,8 @@ const NAMES = [
   'Avatar', 'Skeleton', 'Rate', 'Tabs', 'Collapse', 'Table', 'Steps', 'Breadcrumb',
 ] as const
 
-function Provider({ children }: { children: ReactNode }) {
-  return <Antd.ConfigProvider>{children}</Antd.ConfigProvider>
+function Provider({ children, fonts }: { children: ReactNode; fonts?: DesignFonts | null }) {
+  return <Antd.ConfigProvider theme={fonts ? { token: { fontFamily: fontStack(fonts.body) } } : undefined}>{children}</Antd.ConfigProvider>
 }
 
 const lib: LoadedLibrary = {

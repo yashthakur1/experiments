@@ -13,6 +13,8 @@
  *  Keep it free of React and "@/" imports so Node tests can load it.
  * ================================================================== */
 
+import { ICON_POOL } from '../iconNames'
+
 export type LibraryId = 'shadcn' | 'relume' | 'heroui' | 'mui' | 'antd'
 
 /** One row of a records prop: flat, with plain values only (Ant Design's `items`, `columns`, `dataSource`). */
@@ -69,12 +71,7 @@ const bool: PropSpec = { kind: 'boolean' }
 const rows = (shape: string): PropSpec => ({ kind: 'records', shape })
 
 /** Icons (lucide-react) the model may place. The render map must contain every name. */
-export const ICON_NAMES = [
-  'ArrowRight', 'Check', 'ChevronRight', 'Plus', 'Search', 'Settings', 'Bell', 'User', 'Users', 'Star', 'Zap', 'Mail',
-  'Heart', 'Globe', 'Lock', 'Shield', 'Play', 'Download', 'Upload', 'Calendar', 'Clock', 'CreditCard', 'TrendingUp',
-  'Code', 'Terminal', 'Rocket', 'Sparkles', 'Layers', 'FileText', 'Menu', 'X', 'Activity', 'Database', 'Cloud', 'Cpu',
-  'Key', 'Package',
-] as const
+export const ICON_NAMES = ICON_POOL
 
 const ICON: ComponentSpec = {
   name: 'Icon',
@@ -526,7 +523,7 @@ Extra node type. In addition to container / grid / text / image, a node may be:
 
 RULES FOR THIS MODE (they override the general rules where they differ):
 - Use "component" nodes for EVERYTHING that a component covers: every button, badge, card, input, tab set, table, alert, avatar, progress bar, switch, checkbox, FAQ. NEVER draw those with container/text/image/button nodes. Do not use the "button" node type at all. A good design has at least 10 component nodes; a design made mostly of container/text/image nodes is WRONG for this mode.
-- Do not use "image" nodes except for one chart or photo placeholder; never draw progress bars, badges or avatars as blocks.
+- Pictures are "image" nodes (with art, alt, prompt) and symbols are "icon" nodes: they are NOT library components, so use them freely as the ICONS, IMAGES AND FONTS section says. Never draw progress bars or badges as blocks; use the library components for those. A person's avatar is the Avatar component if the catalog has one, otherwise an image node.
 - container / grid nodes are only for layout (flex, grid, gap, padding, width, alignment) and section backgrounds. text nodes are only for headings and paragraphs no component covers.
 - ${lib.layoutGuide}
 - frameClasses must be "${lib.frameClasses}" (you may add nothing else).

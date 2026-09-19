@@ -1,5 +1,6 @@
 import { Component, createElement, useEffect, useState, type ElementType, type ReactElement, type ReactNode } from 'react'
-import type { CanvasNode } from '../ai'
+import type { CanvasNode, DesignFonts } from '../ai'
+import { useGoogleFonts } from '../fonts'
 import { cn } from '@/lib/utils'
 import { componentSpec, getLibrary, type LibraryId } from './catalog'
 import type { LoadedLibrary } from './libs/types'
@@ -54,7 +55,8 @@ export function missingRenderers(id: LibraryId): string[] {
  * Loads a library and wraps its design in the theme provider the library needs (if any). Shows a small
  * placeholder until the library is ready, so real components never render before they exist.
  */
-export function RealLibraryProvider({ library, children }: { library: LibraryId | null; children: ReactNode }) {
+export function RealLibraryProvider({ library, fonts, children }: { library: LibraryId | null; fonts?: DesignFonts | null; children: ReactNode }) {
+  useGoogleFonts([fonts?.heading, fonts?.body])
   const [, setTick] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const ready = library === null || isLibraryLoaded(library)
@@ -84,7 +86,7 @@ export function RealLibraryProvider({ library, children }: { library: LibraryId 
     return <div className="delayed-in m-6 font-mono text-[12px] text-zinc-500">Loading {label} components…</div>
   }
   const Provider = loaded[library]!.Provider
-  return Provider ? <Provider>{children}</Provider> : <>{children}</>
+  return Provider ? <Provider fonts={fonts}>{children}</Provider> : <>{children}</>
 }
 
 /* ------------------------------------------------------------------ *

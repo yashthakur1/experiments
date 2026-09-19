@@ -69,7 +69,19 @@ looks the same in both themes. Regenerate both blocks from `node_modules/tailwin
 
 Google Fonts are loaded from Google's servers when a language with web fonts is shown. That sends the visitor's IP
 to Google, like any site that uses Google Fonts. If that matters, self-host the fonts instead.
-No stock photos are bundled. The `bit-graphics` image tool was not used: it needs a paid image API.
+No stock photos are bundled.
+
+## Pictures in the Handover design
+
+| Part | Source | Cost |
+|---|---|---|
+| Drawn stand-ins for every image node (cup, bag, portrait, skyline, chart…) | Vector scenes drawn in the app from the design's own colors (`src/imageArt.ts`) | Free |
+| Icons (`icon` nodes) | lucide-react, the names in `src/iconNames.ts` | Free (ISC) |
+| Fonts (`fonts` pairing) | Google Fonts, families from `FONT_CATALOG` in `src/language.ts` | Free (OFL / Apache-2.0) |
+| Real pictures | Gemini's image model, called from the browser with the user's own key, **only when the user clicks** (`src/imageGen.ts`) | Billed by Google per picture |
+
+The `bit-graphics` MCP tool cannot be called by the running app (MCP tools belong to the coding assistant, not to the
+browser), so real pictures use the same Gemini image engine directly.
 
 ## Rules for adding a library
 

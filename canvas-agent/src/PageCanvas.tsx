@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { abortActiveCalls, componentStats, explainError, generateLayout, providerMeta, resolvedModel, type AIConfig, type CanvasNode, type ErrorReport, type ValidationResult } from './ai'
+import { abortActiveCalls, componentStats, type DesignFonts, explainError, generateLayout, providerMeta, resolvedModel, type AIConfig, type CanvasNode, type ErrorReport, type ValidationResult } from './ai'
 import { subscribeLog } from './log'
 import { paletteOf, vocabularyStyleDirective, type SavedStyle } from './lab'
 import type { CanvasSnapshot, CanvasState } from './projects'
+import { bodyStack, headingStack, isHeadingText } from './fonts'
+import { LANG_ICONS } from './langIcons'
+import { imageCss, stylePalette, treePalette } from './imageArt'
 import { countTree, diffTrees, findById, insertChild, lastNodeId, patchNode, sleep } from './tree'
-import { HandoverPanel } from './HandoverPanel'
+import { HandoverPanel, type PictureControls } from './HandoverPanel'
+import { aspectFromClasses, generatePicture } from './imageGen'
 import { preloadLibrary, RealLibraryProvider, renderRealNode } from './realui/components'
 import { getLibrary, type LibraryId } from './realui/catalog'
 import { AgentActivityDots, AgentCursor, AgentError, AgentFeed, DotSpinner, nextStepId, type AgentStep } from './ui'
@@ -58,6 +62,10 @@ function compileOps(frame: CanvasNode, sections: CanvasNode[]): WriteOp[] {
 interface RendererProps {
   /** The real component library this tree renders with, if any. */
   library: LibraryId | null
+  /** Colors for the pictures in image nodes. */
+  palette: string[]
+  /** The design's fonts (heading and body). */
+  fonts: DesignFonts | null
   node: CanvasNode
   activeNodeId: string | null
   hoverNodeId: string | null
@@ -68,7 +76,7 @@ interface RendererProps {
 }
 
 function CanvasRenderer(props: RendererProps) {
-  const { node, activeNodeId, hoverNodeId, buildingNodeId, interactive, onSelect, onHover } = props
+  const { node, activeNodeId, hoverNodeId, buildingNodeId, interactive, onSelect, onHover, palette, fonts } = props
   const isActive = interactive && activeNodeId === node.id
 
   /** The editor outline for any node (selected, hovered, or being built by the agent). */
@@ -139,22 +147,40 @@ function CanvasRenderer(props: RendererProps) {
       )
     case 'text':
       return (
-        <motion.div {...shared}>
+        <motion.div {...shared} style={fonts && isHeadingText(node.classes) ? { fontFamily: headingStack(fonts) } : undefined}>
           {node.content}
           {node.content === '' && <span className="opacity-0">·</span>}
           {selectionBadge}
         </motion.div>
       )
-    case 'image':
+    case 'image': {
+      // A picture: a generated one if the node has it, otherwise the illustration that matches its subject.
+      // Without art / alt / prompt it stays a plain decorative block (a chart bar, a gradient chip).
+      const picture = node.src || node.art || node.prompt || node.alt ? imageCss(node, palette) : null
       return (
-        <motion.div {...shared} aria-label={node.label} role="img">
+        <motion.div
+          {...shared}
+          style={picture ? { backgroundImage: picture, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+          aria-label={node.alt ?? node.label}
+          role="img"
+        >
           {selectionBadge}
         </motion.div>
       )
+    }
+    case 'icon': {
+      const Glyph = LANG_ICONS[node.icon ?? ''] ?? LANG_ICONS.Circle
+      return (
+        <motion.span {...shared} className={`${shared.className} inline-flex shrink-0 items-center justify-center`} aria-hidden="true">
+          <Glyph className="size-full" />
+          {selectionBadge}
+        </motion.span>
+      )
+    }
     case 'container':
     case 'grid':
       return (
-        <motion.div {...shared}>
+        <motion.div {...shared} style={node.id === 'root' && fonts ? { fontFamily: bodyStack(fonts) } : undefined}>
           {children}
           {selectionBadge}
         </motion.div>
@@ -168,11 +194,40 @@ function CanvasRenderer(props: RendererProps) {
 
 /** Suggestions once a design exists: changes to it, not new designs. */
 const FOLLOWUP_PROMPTS = [
+  'Add images and icons wherever they belong',
   'Add a pricing section with three plans',
   'Add an FAQ section at the bottom',
   'Make the headline bigger and add a second button',
-  'Tighten the spacing and make the layout denser',
 ]
+
+/** Puts back what the model cannot send: generated pictures (by node id) and the fonts. */
+function carryOver(before: CanvasNode, after: CanvasNode): CanvasNode {
+  const pictures = new Map<string, string>()
+  const collect = (n: CanvasNode) => {
+    if (n.type === 'image' && n.src) pictures.set(n.id, n.src)
+    n.children?.forEach(collect)
+  }
+  collect(before)
+  const apply = (n: CanvasNode): CanvasNode => ({
+    ...n,
+    ...(n.type === 'image' && pictures.has(n.id) ? { src: pictures.get(n.id) } : {}),
+    ...(n.children ? { children: n.children.map(apply) } : {}),
+  })
+  const next = apply(after)
+  return before.fonts && !next.fonts ? { ...next, fonts: before.fonts } : next
+}
+
+/** What the automatic second pass asks for when a fresh design came back without icons or pictures. */
+const ENRICH_PROMPT = 'Add images and icons wherever they belong: an icon before every feature, benefit, stat and list item, and a picture for the hero and each card, product or person that lacks one.'
+
+/** How many icons and pictures a design has. */
+function countAssets(node: CanvasNode): { icons: number; pictures: number } {
+  const own = { icons: node.type === 'icon' ? 1 : 0, pictures: node.type === 'image' && (node.art || node.prompt || node.alt || node.src) ? 1 : 0 }
+  return (node.children ?? []).reduce((acc, c) => {
+    const k = countAssets(c)
+    return { icons: acc.icons + k.icons, pictures: acc.pictures + k.pictures }
+  }, own)
+}
 
 const FRAME_PREFIX = 'flex flex-col w-[1200px] rounded-xl overflow-hidden shadow-2xl '
 const MAX_HISTORY = 5
@@ -205,6 +260,8 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
   const [mode, setMode] = useState<'edit' | 'new'>('edit')
   const [revisingNow, setRevisingNow] = useState(false)
   const preRunRef = useRef<CanvasSnapshot | null>(null)
+  // set after a fresh design came back without icons or pictures: one automatic pass then asks for them
+  const [pendingEnrich, setPendingEnrich] = useState(false)
   const [steps, setSteps] = useState<AgentStep[]>([])
   const [doneSummary, setDoneSummary] = useState<string | null>(initial?.doneSummary ?? null)
   const [buildingNodeId, setBuildingNodeId] = useState<string | null>(null)
@@ -215,10 +272,19 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
   const [handoverOpen, setHandoverOpen] = useState(false)
   const [error, setError] = useState<ErrorReport | null>(null)
   const runningRef = useRef(false)
+  // Real pictures (Gemini image model, on click only)
+  const [pictureBusy, setPictureBusy] = useState<Record<string, boolean>>({})
+  const [pictureErrors, setPictureErrors] = useState<Record<string, string>>({})
+  const treeRef = useRef<CanvasNode | null>(tree)
+  useEffect(() => {
+    treeRef.current = tree
+  }, [tree])
 
   const selectedStyle = styleId ? (styles.find((s) => s.id === styleId) ?? null) : null
   // Start loading the style's real component library now, so the first design does not wait for it.
   const styleLibrary = selectedStyle?.system.meta?.library ?? null
+  // Colors for the pictures: the selected style's palette, or else the colors the design itself uses.
+  const palette = useMemo(() => (selectedStyle ? stylePalette(selectedStyle.system.tokens.color) : treePalette(tree)), [selectedStyle, tree])
   useEffect(() => preloadLibrary(styleLibrary), [styleLibrary])
 
   const pushStatus = useCallback((label: string) => {
@@ -304,6 +370,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
         classes: `flex flex-col w-[1200px] rounded-xl overflow-hidden shadow-2xl ${lib ? `${lib.scopeClass} ` : ''}${v.layout.frameClasses}`,
         children: v.layout.sections,
         ...(lib ? { library: lib.id } : {}),
+        ...(v.layout.fonts ? { fonts: v.layout.fonts } : {}),
       })
 
       let streamed = false
@@ -336,7 +403,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
           lib?.id,
           revising && before
             ? {
-                design: { frameLabel: before.label, frameClasses: before.classes.replace(FRAME_PREFIX, '').replace(lib?.scopeClass ?? '\u0000', '').trim(), sections: before.children ?? [] },
+                design: { frameLabel: before.label, frameClasses: before.classes.replace(FRAME_PREFIX, '').replace(lib?.scopeClass ?? '\u0000', '').trim(), sections: before.children ?? [], fonts: before.fonts },
                 earlier: turns,
                 focus: focusNode ? { id: focusNode.id, label: focusNode.label } : null,
               }
@@ -373,6 +440,8 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
       if (streamed || revising) {
         // canvas already reflects the stream — commit the fully validated tree
         finalTree = toTree(result)
+        // a change keeps what it did not touch: generated pictures, and the fonts if the model left them out
+        if (revising && before) finalTree = carryOver(before, finalTree)
         setTree(finalTree)
       } else {
         // provider didn't stream (or JSON arrived whole) — play back the build
@@ -424,14 +493,28 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
       setRevisingNow(false)
       setMode('edit')
       if (revising) setPrompt('')
+      if (!revising && finalTree) {
+        const assets = countAssets(finalTree)
+        if (assets.icons === 0 || assets.pictures === 0) {
+          pushStatus(`The model drew ${assets.icons === 0 ? 'no icons' : ''}${assets.icons === 0 && assets.pictures === 0 ? ' and ' : ''}${assets.pictures === 0 ? 'no pictures' : ''} — asking it to add them`)
+          setPendingEnrich(true)
+        }
+      }
       setHandoverOpen(true)
       onPersist({ tree: finalTree, instruction: trimmed, doneSummary: summary, turns: nextTurns, history: nextHistory })
     },
     [config, running, openConfig, pushStatus, tickStatus, failStatus, styleId, styles, onPersist, tree, mode, turns, history, instruction, doneSummary, activeNodeId],
   )
 
+  useEffect(() => {
+    if (!pendingEnrich || running || !tree) return
+    setPendingEnrich(false)
+    void runPrompt(ENRICH_PROMPT)
+  }, [pendingEnrich, running, tree, runPrompt])
+
   const stopRun = useCallback(() => {
     ++runIdRef.current // must come first: the aborted call's catch checks it
+    setPendingEnrich(false)
     abortActiveCalls()
     setRunning(false)
     setRevisingNow(false)
@@ -445,6 +528,61 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
       setDoneSummary(before.doneSummary)
     }
   }, [failStatus])
+
+  /** Edits one node (a picture's subject, or its generated image) and saves the project. */
+  const patchImage = useCallback(
+    (id: string, patch: Partial<CanvasNode>) => {
+      const current = treeRef.current
+      if (!current) return
+      const next = patchNode(current, id, patch)
+      treeRef.current = next
+      setTree(next)
+      onPersist({ tree: next, instruction, doneSummary, turns, history })
+    },
+    [onPersist, instruction, doneSummary, turns, history],
+  )
+
+  const makePicture = useCallback(
+    async (id: string) => {
+      const node = treeRef.current ? findById(treeRef.current, id) : null
+      if (!node || node.type !== 'image') return
+      setPictureBusy((b) => ({ ...b, [id]: true }))
+      setPictureErrors((e) => {
+        const { [id]: _drop, ...rest } = e
+        void _drop
+        return rest
+      })
+      try {
+        const src = await generatePicture(config, { prompt: node.prompt ?? node.alt ?? node.label, aspect: aspectFromClasses(node.classes), context: turns[0] ?? instruction ?? undefined })
+        patchImage(id, { src })
+      } catch (err) {
+        setPictureErrors((e) => ({ ...e, [id]: err instanceof Error ? err.message : String(err) }))
+      } finally {
+        setPictureBusy((b) => ({ ...b, [id]: false }))
+      }
+    },
+    [config, instruction, turns, patchImage],
+  )
+
+  const makeAllPictures = useCallback(async () => {
+    const ids: string[] = []
+    const walk = (n: CanvasNode) => {
+      if (n.type === 'image' && !n.src && (n.art || n.prompt || n.alt)) ids.push(n.id)
+      n.children?.forEach(walk)
+    }
+    if (treeRef.current) walk(treeRef.current)
+    for (const id of ids) await makePicture(id)
+  }, [makePicture])
+
+  const pictureControls: PictureControls = {
+    canGenerate: config.provider === 'gemini' && config.apiKey.trim().length > 0,
+    busy: pictureBusy,
+    errors: pictureErrors,
+    onGenerate: makePicture,
+    onGenerateAll: makeAllPictures,
+    onClear: (id) => patchImage(id, { src: undefined }),
+    onArt: (id, art) => patchImage(id, { art, src: undefined }),
+  }
 
   const undo = useCallback(() => {
     const previous = history[history.length - 1]
@@ -464,6 +602,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
 
   const clearCanvas = useCallback(() => {
     ++runIdRef.current
+    setPendingEnrich(false)
     setError(null)
     setHandoverOpen(false)
     setRunning(false)
@@ -726,10 +865,12 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
                 </div>
               ) : (
                 <div className="design-surface contents">
-                <RealLibraryProvider library={tree.library ?? null}>
+                <RealLibraryProvider library={tree.library ?? null} fonts={tree.fonts}>
                 <CanvasRenderer
                   node={tree}
                   library={tree.library ?? null}
+                  palette={palette}
+                  fonts={tree.fonts ?? null}
                   activeNodeId={activeNodeId}
                   hoverNodeId={hoverNodeId}
                   buildingNodeId={buildingNodeId}
@@ -750,7 +891,7 @@ export default function PageCanvas({ config, openConfig, styles, styleId, openDe
 
       {/* ============ Handover panel ============ */}
       {handoverOpen && tree !== null && !running && (
-        <HandoverPanel tree={tree} selected={activeNode} artboard={artboardRef} onClose={() => setHandoverOpen(false)} />
+        <HandoverPanel tree={tree} selected={activeNode} artboard={artboardRef} onClose={() => setHandoverOpen(false)} pictures={pictureControls} />
       )}
     </div>
   )

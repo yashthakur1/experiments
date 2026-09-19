@@ -1,5 +1,7 @@
 import type { CanvasNode } from './ai'
 import type { DesignSystem } from './lab'
+import type { DesignFonts } from './ai'
+import { fontStack, googleFontsHref } from './language'
 import { componentSpec, getLibrary, type ComponentSpec, type LibraryId, type PropValue } from './realui/catalog'
 
 /* ================================================================== *
@@ -68,9 +70,23 @@ interface EmitCtx {
   /** Catalog entries and icon names the emitted code uses (for the import block). */
   used: Map<string, ComponentSpec>
   icons: Set<string>
+  /** The design's fonts; headings and the root get them. */
+  fonts: DesignFonts | null
+  /** Picture files the code refers to, for the note at the top. */
+  images: { path: string; note: string }[]
 }
 
-const newCtx = (lang: EmitCtx['lang'], library: LibraryId | null, seenH1 = false): EmitCtx => ({ lang, seenH1, library, used: new Map(), icons: new Set() })
+const newCtx = (lang: EmitCtx['lang'], library: LibraryId | null, seenH1 = false, fonts: DesignFonts | null = null): EmitCtx => ({ lang, seenH1, library, used: new Map(), icons: new Set(), fonts, images: [] })
+
+/** lucide's id for an icon component name: Share2 → share-2, ChartBar → chart-bar */
+const lucideId = (name: string) => name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([a-zA-Z])(\d)/g, '$1-$2').toLowerCase()
+const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'image'
+
+/** font-family as a style attribute for the code language. */
+function fontStyle(family: string, lang: 'jsx' | 'html'): string {
+  const stack = fontStack(family)
+  return lang === 'jsx' ? ` style={{ fontFamily: ${JSON.stringify(stack)} }}` : ` style="font-family: ${escapeAttr(stack)}"`
+}
 
 function tagFor(node: CanvasNode, depth: number, ctx: EmitCtx): string {
   switch (node.type) {
@@ -144,13 +160,28 @@ function emitComponent(node: CanvasNode, depth: number, indent: string, ctx: Emi
 
 function emit(node: CanvasNode, depth: number, indent: string, ctx: EmitCtx, isRoot: boolean): string {
   if (node.type === 'component' && ctx.library) return emitComponent(node, depth, indent, ctx)
+  const cls = ctx.lang === 'jsx' ? 'className' : 'class'
+  if (node.type === 'icon') {
+    const name = node.icon ?? 'Circle'
+    if (ctx.lang === 'jsx') {
+      ctx.icons.add(name)
+      return `${indent}<${name} className="${escapeAttr(node.classes)}" aria-hidden="true" />`
+    }
+    return `${indent}<i data-lucide="${lucideId(name)}" class="${escapeAttr(node.classes)}" aria-hidden="true"></i>`
+  }
+  if (node.type === 'image' && (node.art || node.prompt || node.alt || node.src)) {
+    const path = `/images/${slug(node.id)}.jpg`
+    ctx.images.push({ path, note: node.prompt ?? node.alt ?? node.label })
+    const object = /object-(?:cover|contain)/.test(node.classes) ? node.classes : `${node.classes} object-cover`
+    return `${indent}<img src="${path}" alt="${escapeAttr(node.alt ?? node.label)}" ${cls}="${escapeAttr(object)}" />`
+  }
   const tag = tagFor(node, depth, ctx)
   const classes = isRoot ? fluid(node.classes) : node.classes
-  const cls = ctx.lang === 'jsx' ? 'className' : 'class'
   const attrs: string[] = [`${cls}="${escapeAttr(classes)}"`]
   if (node.type === 'button') attrs.push('type="button"')
   if (node.type === 'image') attrs.push('role="img"', `aria-label="${escapeAttr(node.label)}"`)
-  const open = `<${tag} ${attrs.join(' ')}>`
+  const heading = ctx.fonts && (tag === 'h1' || tag === 'h2' || tag === 'h3')
+  const open = `<${tag} ${attrs.join(' ')}${isRoot && ctx.fonts ? fontStyle(ctx.fonts.body, ctx.lang) : ''}${heading ? fontStyle(ctx.fonts!.heading, ctx.lang) : ''}>`
   const comment = depth === 1 ? `${indent}${ctx.lang === 'jsx' ? `{/* ${node.label} */}` : `<!-- ${node.label} -->`}\n` : ''
 
   if (node.type === 'image') return `${comment}${indent}${open}</${tag}>`
@@ -175,12 +206,26 @@ function libraryHeader(ctx: EmitCtx): string {
   return `${notes.join('\n')}\n${imports.join('\n')}\n\n`
 }
 
+/** Comment lines for fonts and pictures, shared by the React and HTML exports. */
+function assetNotes(ctx: EmitCtx, prefix: string): string {
+  const lines: string[] = []
+  const href = ctx.fonts ? googleFontsHref([ctx.fonts.heading, ctx.fonts.body].map((family) => ({ role: 'body', family, weights: [300, 400, 500, 600, 700, 800] }))) : null
+  if (ctx.fonts) lines.push(`Fonts: ${ctx.fonts.heading} (headings), ${ctx.fonts.body} (body).${href ? ` Load them:  <link rel="stylesheet" href="${href}" />` : ''}`)
+  if (ctx.images.length) {
+    lines.push('Pictures: put these files in your /public folder (the canvas shows drawn stand-ins):')
+    for (const img of ctx.images) lines.push(`  ${img.path}  —  ${img.note}`)
+  }
+  return lines.map((l) => `${prefix}${l}`).join('\n')
+}
+
 /** A React + Tailwind component for the whole page (real library imports when the design uses them). */
 export function toReact(root: CanvasNode): string {
-  const ctx = newCtx('jsx', root.library ?? null)
+  const ctx = newCtx('jsx', root.library ?? null, false, root.fonts ?? null)
   const name = componentName(root.label)
   const body = emit(root, 0, '    ', ctx, true) // emit first: it collects what the import block needs
-  const header = ctx.library ? libraryHeader(ctx) : '// Needs Tailwind CSS (v4, or v3 with these utilities).\n'
+  const notes = assetNotes(ctx, '// ')
+  const plainIcons = !ctx.library && ctx.icons.size ? `// Icons:  npm i lucide-react\nimport { ${[...ctx.icons].sort().join(', ')} } from "lucide-react"\n` : ''
+  const header = (ctx.library ? libraryHeader(ctx) : `// Needs Tailwind CSS (v4, or v3 with these utilities).\n${plainIcons}`) + (notes ? `${notes}\n` : '')
   return `// Generated by Canvas Agent.\n${header}export default function ${name}() {
   return (
 ${body}
@@ -196,7 +241,10 @@ export function toSnippet(node: CanvasNode, library: LibraryId | null = null): s
 
 /** A standalone HTML page that renders by itself (Tailwind Play CDN). Not available for real-component designs. */
 export function toHtml(root: CanvasNode): string {
-  const ctx = newCtx('html', null)
+  const ctx = newCtx('html', null, false, root.fonts ?? null)
+  const body = emit(root, 0, '    ', ctx, true)
+  const notes = assetNotes(ctx, '    ')
+  const fontHref = ctx.fonts ? googleFontsHref([ctx.fonts.heading, ctx.fonts.body].map((family) => ({ role: 'body', family, weights: [300, 400, 500, 600, 700, 800] }))) : null
   const title = componentName(root.label).replace(/([a-z])([A-Z])/g, '$1 $2')
   return `<!doctype html>
 <html lang="en">
@@ -205,10 +253,10 @@ export function toHtml(root: CanvasNode): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)}</title>
     <!-- Tailwind Play CDN: fine for previews. For production, build with Tailwind CSS instead. -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com"></script>${fontHref ? `\n    <link rel="stylesheet" href="${fontHref}" />` : ''}
   </head>
   <body class="min-h-screen bg-zinc-100 p-6">
-${emit(root, 0, '    ', ctx, true)}
+${notes ? `    <!--\n${notes}\n    -->\n` : ''}${body}${/data-lucide/.test(body) ? '\n    <script src="https://unpkg.com/lucide@latest"></script>\n    <script>lucide.createIcons()</script>' : ''}
   </body>
 </html>
 `

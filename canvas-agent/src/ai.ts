@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { log, tick } from './log'
+import { catalogFont, FONT_CATALOG, isIconName } from './language'
+import { ICON_POOL } from './iconNames'
 import { getLibrary, libraryPrompt, type LibraryId, type PropRecord, type PropValue } from './realui/catalog'
 
 /* ================================================================== *
@@ -16,7 +18,7 @@ import { getLibrary, libraryPrompt, type LibraryId, type PropRecord, type PropVa
 export interface CanvasNode {
   id: string
   /** 'component' is a REAL library component (see realui/catalog.ts). */
-  type: 'container' | 'text' | 'image' | 'button' | 'grid' | 'component'
+  type: 'container' | 'text' | 'image' | 'icon' | 'button' | 'grid' | 'component'
   label: string
   classes: string // Tailwind CSS strings
   children?: CanvasNode[]
@@ -27,6 +29,21 @@ export interface CanvasNode {
   props?: Record<string, PropValue>
   /** Root node only: which real library the whole tree renders with. */
   library?: LibraryId
+  /** Root node only: the fonts the design uses (families from FONT_CATALOG). */
+  fonts?: DesignFonts
+  /** type 'icon' only: a name from ICON_POOL. */
+  icon?: string
+  /** type 'image' only: the subject (a SceneKind such as "cup" or "portrait"), a description, and alt text. */
+  art?: string
+  prompt?: string
+  alt?: string
+  /** type 'image' only: a generated picture (data URL). It replaces the drawn scene. */
+  src?: string
+}
+
+export interface DesignFonts {
+  heading: string
+  body: string
 }
 
 export interface GeneratedLayout {
@@ -34,6 +51,7 @@ export interface GeneratedLayout {
   frameClasses: string
   sections: CanvasNode[]
   library?: LibraryId
+  fonts?: DesignFonts
 }
 
 /* ------------------------------------------------------------------ *
@@ -231,6 +249,7 @@ Shape:
 {
   "frameLabel": "Frame · <short-slug>",
   "frameClasses": "<Tailwind classes for the page frame: background color (+ optional default text color)>",
+  "fonts": { "heading": "<family from FONT LIST>", "body": "<family from FONT LIST>" },
   "sections": [ CanvasNode, ... ]
 }
 "sections" is 2–5 top-level page sections, stacked vertically inside the frame.
@@ -238,22 +257,33 @@ Shape:
 CanvasNode schema:
 {
   "id": "<unique-kebab-case-string>",
-  "type": "container" | "grid" | "text" | "button" | "image",
+  "type": "container" | "grid" | "text" | "button" | "image" | "icon",
   "label": "<short human name, e.g. 'Hero', 'Stat card'>",
   "classes": "<space-separated Tailwind utilities from the ALLOWED VOCABULARY only>",
   "children": [CanvasNode, ...],   // ONLY on container/grid
-  "content": "<string>"            // ONLY on text/button
+  "content": "<string>",           // ONLY on text/button
+  "icon": "<name from ICON LIST>", // ONLY on icon nodes
+  "art": "<landscape|skyline|portrait|product|cup|chart|food|device|abstract>", // ONLY on image nodes: what the picture shows
+  "alt": "<short alt text>", "prompt": "<one sentence describing the picture>"   // ONLY on image nodes
 }
 
 CANVAS: the page frame is a 1200px-wide desktop viewport. Design for that width — generous horizontal layouts, multi-column heroes (asymmetric splits, side-by-side content + visual), 3–4 column grids, wide stat strips. Cap long text runs with max-w-xl/2xl/3xl so line length stays readable; center or offset content blocks deliberately inside the width rather than letting everything stretch edge to edge.
 
 HARD RULES:
 - 25–60 nodes total. Maximum nesting depth 5. Every id unique.
-- "image" nodes are decorative visual blocks (icons, avatars, photo stand-ins, chart bars) built purely from size/gradient/rounded classes. They have no children, no content, no src.
+- "image" nodes are PICTURES: photos, product shots, illustrations, avatars, chart pictures. Give each size classes (w-… h-… rounded-…) plus "art", "alt" and "prompt"; the app draws a matching illustration into it. An image node WITHOUT art/alt/prompt is only a plain decorative block (a bar, a gradient chip). Image nodes have no children and no content.
+- "icon" nodes are single symbols (see ICONS, IMAGES AND FONTS). They have no children and no content.
 - Give each section its own horizontal padding (px-8..px-14) and vertical padding; sections own their background color.
 - Use ONLY classes from the ALLOWED VOCABULARY. Never use: arbitrary values (w-[500px]), responsive prefixes (sm:, md:, lg:), state variants (hover:, focus:), or any utility not listed. Unknown classes are stripped and your design degrades.
 - Opacity modifiers exist only as {bg,text,border,ring}-{white,black}/{5,10,20,30,40,50,60,70,80,90}.
 - Write real, specific copy for the subject — never lorem ipsum, never placeholder text like "Title here".
+
+ICONS, IMAGES AND FONTS — every design uses all three:
+- ICONS: use "icon" nodes. Put one before every feature, benefit, step, stat, contact line and list item, and beside key nav or section titles. Size with classes (size-5, size-6, size-8), color with a text color class. The name must come from ICON LIST and should fit the meaning (Truck for shipping, Leaf for organic). A row of features WITHOUT icons is wrong. Use 6–20 icons per design.
+- IMAGES: use "image" nodes for every hero picture, product shot, card photo, gallery item, team member and testimonial avatar (size-12 rounded-full, art "portrait"). Never leave picture space empty and never draw a picture with plain containers. Use 3–10 images per design. "art" says what it shows; "prompt" describes it in one sentence so a real picture can be made from it later.
+- FONTS: always set "fonts": pick a heading and a body family that fit the tone (artisan or warm → a serif heading with a friendly sans body; technical → a grotesk or mono; playful → a rounded; Japanese themes → a JP family). Use only families from FONT LIST.
+ICON LIST: ${ICON_POOL.join(', ')}
+FONT LIST: ${FONT_CATALOG.map((f) => `${f.family} (${f.mood})`).join('; ')}
 
 ALLOWED VOCABULARY:
 - Display/layout: flex, inline-flex, grid, block, inline-block, hidden, flex-row, flex-col, flex-wrap, flex-1, grow, shrink-0, items-{start,center,end,stretch,baseline}, justify-{start,center,end,between,around,evenly}, self-{auto,start,center,end,stretch}, grid-cols-{1..6}, col-span-{1..6}, row-span-{1..6}, relative, overflow-hidden, mx-auto, ml-auto, mr-auto, mt-auto, aspect-square, aspect-video
@@ -269,7 +299,7 @@ DESIGN DIRECTION — this is where you show range:
 - Vary structure between requests: asymmetric two-column heroes, centered editorial heroes, stat strips, 2–4 column card grids, split banners, testimonial rows, data tables built from rows of containers. Do not emit the same hero/features/CTA template unless the request asks for it.
 - Dark designs: near-black background (bg-zinc-950, bg-slate-950...), light text, accents via saturated color + border-{white}/10 hairlines. Light designs: white/stone-50 background, near-black text, one confident accent.
 - Buttons must look pressable: horizontal padding, rounded, contrasting background or border.
-- Use image nodes generously for visual rhythm: gradient avatars, icon chips, chart bars (a row of flex items-end bars with varying h-), photo stand-ins with aspect-video and a gradient.`
+- Use image nodes (with art/alt/prompt) generously for visual rhythm: gradient avatars, icon chips, chart bars (a row of flex items-end bars with varying h-), photo stand-ins with aspect-video and a gradient.`
 
 /* ------------------------------------------------------------------ *
  *  Class sanitizer — runtime mirror of the @source inline() safelist
@@ -366,7 +396,7 @@ export function componentStats(root: CanvasNode): { components: number; total: n
  *  Response parsing + AST validation
  * ------------------------------------------------------------------ */
 
-const NODE_TYPES = new Set(['container', 'grid', 'text', 'button', 'image', 'component'])
+const NODE_TYPES = new Set(['container', 'grid', 'text', 'button', 'image', 'icon', 'component'])
 const MAX_NODES = 90
 const MAX_DEPTH = 6
 /** Real components nest deeper by design: Tabs › TabsContent › Table › TableBody › TableRow › TableCell. */
@@ -387,6 +417,16 @@ function extractJson(text: string): unknown {
   const end = cleaned.lastIndexOf('}')
   if (start === -1 || end <= start) throw new Error('model returned no JSON object')
   return JSON.parse(cleaned.slice(start, end + 1))
+}
+
+/** The font pairing, if both families are in the catalog. One family given fills both roles. */
+export function cleanFonts(raw: unknown): DesignFonts | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  const pick = (v: unknown) => (typeof v === 'string' ? catalogFont(v)?.family : undefined)
+  const heading = pick(o.heading) ?? pick(o.body)
+  const body = pick(o.body) ?? pick(o.heading)
+  return heading && body ? { heading, body } : null
 }
 
 export function validateLayout(raw: unknown, libraryId?: LibraryId | null, opts: { partial?: boolean } = {}): ValidationResult {
@@ -503,6 +543,22 @@ export function validateLayout(raw: unknown, libraryId?: LibraryId | null, opts:
     }
 
     const node: CanvasNode = { id, type, label, classes }
+    if (type === 'icon') {
+      const asked = [n.icon, n.name, n.content].find((v) => typeof v === 'string') as string | undefined
+      node.icon = isIconName(asked) ? asked : 'Circle'
+      if (asked && !isIconName(asked)) warnings.add(`Unknown icon “${asked}” replaced by a circle`)
+      return node
+    }
+    if (type === 'image') {
+      const text = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined)
+      const art = text(n.art, 40)?.toLowerCase()
+      const prompt = text(n.prompt, 300)
+      const alt = text(n.alt, 160)
+      if (art) node.art = art
+      if (prompt) node.prompt = prompt
+      if (alt) node.alt = alt
+      return node
+    }
     if ((type === 'text' || type === 'button') && typeof n.content === 'string') node.content = n.content
     if ((type === 'container' || type === 'grid') && Array.isArray(n.children)) node.children = kidsOf(n.children, ancestors)
     return node
@@ -521,6 +577,7 @@ export function validateLayout(raw: unknown, libraryId?: LibraryId | null, opts:
       frameClasses: lib ? lib.frameClasses : sanitizeClasses(obj.frameClasses, dropped) || 'bg-white',
       sections,
       ...(lib ? { library: lib.id } : {}),
+      ...(cleanFonts(obj.fonts) ? { fonts: cleanFonts(obj.fonts)! } : {}),
     },
     droppedClasses: [...dropped],
     nodeCount: total,
@@ -1258,7 +1315,7 @@ export async function generateValidated<T>(
 
 /** What the model needs to change an existing design instead of drawing a new one. */
 export interface RevisionContext {
-  design: { frameLabel: string; frameClasses: string; sections: CanvasNode[] }
+  design: { frameLabel: string; frameClasses: string; sections: CanvasNode[]; fonts?: DesignFonts }
   /** Earlier requests on this design, oldest first. */
   earlier: string[]
   /** The node the user has selected: the change is most likely about it. */
@@ -1270,6 +1327,10 @@ function compactNode(n: CanvasNode): Record<string, unknown> {
   const out: Record<string, unknown> = { id: n.id, type: n.type }
   if (n.component) out.component = n.component
   out.label = n.label
+  if (n.icon) out.icon = n.icon
+  if (n.art) out.art = n.art
+  if (n.alt) out.alt = n.alt
+  if (n.prompt) out.prompt = n.prompt
   if (n.props && Object.keys(n.props).length) out.props = n.props
   if (n.classes) out.classes = n.classes
   if (n.content) out.content = n.content
@@ -1284,10 +1345,11 @@ The user already has a design on the canvas. You get its CURRENT DESIGN as JSON 
 - "Add X" means add it (append, or insert where it belongs). It does not mean redesign. "Remove X" means remove it. "Change X" means edit only X.
 - Keep the same visual language: the same colors, fonts, spacing rhythm and, in real-component mode, the same library.
 - The section count (2–5) and node count (25–60) limits do not apply. The design may grow up to about 90 nodes in total.
+- Images and icons: "add images and icons" means follow the ICONS, IMAGES AND FONTS rules for the whole design: an icon node before every feature, benefit, stat, step and list item, and an image node (with art, alt, prompt) for the hero, each card, each product and each person that lacks one. Keep the nodes that already exist. Keep "fonts" as they are unless asked to change them.
 - If the user points at a node (POINTED AT), the request is about that node and what is inside it, unless the text clearly says otherwise.`
 
 function revisionUserPrompt(request: string, rev: RevisionContext): string {
-  const design = JSON.stringify({ frameLabel: rev.design.frameLabel, frameClasses: rev.design.frameClasses, sections: rev.design.sections.map(compactNode) })
+  const design = JSON.stringify({ frameLabel: rev.design.frameLabel, frameClasses: rev.design.frameClasses, ...(rev.design.fonts ? { fonts: rev.design.fonts } : {}), sections: rev.design.sections.map(compactNode) })
   return [
     `CURRENT DESIGN:\n${design}`,
     rev.earlier.length ? `EARLIER REQUESTS (oldest first):\n${rev.earlier.map((r, i) => `${i + 1}. ${r}`).join('\n')}` : '',

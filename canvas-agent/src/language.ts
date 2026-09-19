@@ -1,4 +1,5 @@
 import type { ComponentDef, DesignSystem, DesignTokens, StyleDecl } from './lab'
+import { ICON_POOL } from './iconNames'
 
 /* ================================================================== *
  *  The rest of a design language.
@@ -115,7 +116,7 @@ export function parseColor(css: string | undefined): (RGB & { 3?: number }) | nu
 
 export const toHex = ([r, g, b]: RGB) => `#${[r, g, b].map((c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, '0')).join('')}`
 
-function luminance([r, g, b]: RGB): number {
+export function luminance([r, g, b]: RGB): number {
   const lin = (c: number) => {
     const s = c / 255
     return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
@@ -370,16 +371,7 @@ export function googleFontsHref(fonts: FontSpec[]): string | null {
  * ------------------------------------------------------------------ */
 
 /** Icons the model may choose from. Every name must exist in lucide-react (checked by a test). */
-export const ICON_POOL = [
-  'Home', 'Search', 'Heart', 'Star', 'User', 'Users', 'Settings', 'Bell', 'Mail', 'Calendar', 'Clock', 'MapPin', 'Camera',
-  'Image', 'ShoppingBag', 'ShoppingCart', 'CreditCard', 'ArrowRight', 'ArrowLeft', 'ArrowUpRight', 'ChevronRight', 'ChevronDown',
-  'Check', 'X', 'Plus', 'Minus', 'Menu', 'Filter', 'Share2', 'Bookmark', 'Download', 'Upload', 'Play', 'Pause', 'Music', 'Video',
-  'Mic', 'Globe', 'Compass', 'Sun', 'Moon', 'Cloud', 'Leaf', 'Flower', 'Flower2', 'Sprout', 'TreePine', 'Mountain', 'Waves',
-  'Flame', 'Droplet', 'Sparkles', 'Zap', 'Gift', 'Coffee', 'Utensils', 'Plane', 'Train', 'Car', 'Bike', 'Ticket', 'Book',
-  'BookOpen', 'Pen', 'Palette', 'Brush', 'Scissors', 'Lock', 'Key', 'Shield', 'Eye', 'Info', 'Trash2', 'Edit', 'Copy',
-  'Link', 'Send', 'MessageCircle', 'Phone', 'Wifi', 'Battery', 'Package', 'Truck', 'Tag', 'Award', 'Trophy', 'Target',
-  'BarChart3', 'TrendingUp', 'Activity', 'Layers', 'Grid3x3', 'Box', 'Cpu', 'Database', 'Code', 'Terminal', 'Rocket',
-] as const
+export { ICON_POOL }
 
 const ICON_DEFAULTS = ['Home', 'Search', 'Heart', 'Star', 'User', 'Settings', 'Bell', 'Mail', 'Calendar', 'MapPin', 'Camera', 'ShoppingBag', 'ArrowRight', 'Check', 'X', 'Menu']
 
