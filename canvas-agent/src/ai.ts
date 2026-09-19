@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 
 /* ================================================================== *
  *  AI layer — schema, strict system instruction, class sanitizer,
- *  and provider adapters (Claude / OpenAI / Gemini / Groq / OpenZen).
+ *  and provider adapters (Gemini / OpenCode Zen / Claude / OpenAI / Groq).
  *
  *  Every provider receives the same system instruction and must emit
  *  one JSON object matching GeneratedLayout. Classes are constrained
@@ -30,61 +30,165 @@ export interface GeneratedLayout {
  *  Provider registry + config (persisted in localStorage)
  * ------------------------------------------------------------------ */
 
-export type ProviderId = 'claude' | 'openai' | 'gemini' | 'groq' | 'openzen'
+export type ProviderId = 'gemini' | 'zen' | 'claude' | 'openai' | 'groq'
+
+export interface ModelOption {
+  id: string
+  label: string
+}
 
 export interface ProviderMeta {
   id: ProviderId
   label: string
-  defaultModel: string
-  needsBaseUrl?: boolean
-  defaultBaseUrl?: string
   keyHint: string
+  note?: string
+  /** Curated, newest first. The first entry is the default model. */
+  models: ModelOption[]
 }
 
+/**
+ * Order matters: Gemini is the default provider, OpenCode Zen is the second
+ * default. Model ids come from each provider's own docs / live model list.
+ */
 export const PROVIDERS: ProviderMeta[] = [
-  { id: 'claude', label: 'Claude (Anthropic)', defaultModel: 'claude-opus-4-8', keyHint: 'sk-ant-…' },
-  { id: 'openai', label: 'OpenAI', defaultModel: 'gpt-4o-mini', keyHint: 'sk-…' },
-  { id: 'gemini', label: 'Gemini (Google)', defaultModel: 'gemini-2.5-flash', keyHint: 'AIza…' },
-  { id: 'groq', label: 'Groq', defaultModel: 'llama-3.3-70b-versatile', keyHint: 'gsk_…' },
   {
-    id: 'openzen',
-    label: 'OpenZen (OpenAI-compatible)',
-    defaultModel: '',
-    needsBaseUrl: true,
-    defaultBaseUrl: 'https://api.openzen.ai/v1',
-    keyHint: 'API key',
+    id: 'gemini',
+    label: 'Gemini (Google)',
+    keyHint: 'AIza…',
+    models: [
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+      { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' },
+      { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+    ],
+  },
+  {
+    id: 'zen',
+    label: 'OpenCode Zen',
+    keyHint: 'Zen API key',
+    note: 'Zen sends no CORS headers, so requests go through the local dev server (/zen-proxy). Run the app with npm run dev or npm run preview. Zen free models only work inside OpenCode.',
+    models: [
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+      { id: 'claude-opus-5', label: 'Claude Opus 5' },
+      { id: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
+      { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+      { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
+      { id: 'grok-4.6', label: 'Grok 4.6' },
+      { id: 'kimi-k3', label: 'Kimi K3' },
+      { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+      { id: 'glm-5.3', label: 'GLM 5.3' },
+      { id: 'minimax-m3', label: 'MiniMax M3' },
+    ],
+  },
+  {
+    id: 'claude',
+    label: 'Claude (Anthropic)',
+    keyHint: 'sk-ant-…',
+    models: [
+      { id: 'claude-opus-5', label: 'Claude Opus 5' },
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+      { id: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
+      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+    ],
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    keyHint: 'sk-…',
+    models: [
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+      { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+      { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
+    ],
+  },
+  {
+    id: 'groq',
+    label: 'Groq',
+    keyHint: 'gsk_…',
+    models: [
+      { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
+      { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B' },
+      { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B' },
+      { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B (preview)' },
+    ],
   },
 ]
 
+export const DEFAULT_PROVIDER: ProviderId = PROVIDERS[0].id
+
+export interface ProviderProfile {
+  apiKey: string
+  /** '' means "use the provider's default model". */
+  model: string
+}
+
+/**
+ * `provider`, `model` and `apiKey` describe the ACTIVE provider — every call
+ * site reads those. `profiles` remembers the key + model of each provider, so
+ * switching providers never leaks one provider's key into another.
+ */
 export interface AIConfig {
   provider: ProviderId
   model: string
   apiKey: string
-  baseUrl: string
+  profiles: Partial<Record<ProviderId, ProviderProfile>>
 }
 
 const CONFIG_KEY = 'canvas-agent-ai-config'
-
-export function loadConfig(): AIConfig {
-  try {
-    const raw = localStorage.getItem(CONFIG_KEY)
-    if (raw) return { provider: 'claude', model: '', apiKey: '', baseUrl: '', ...JSON.parse(raw) }
-  } catch {
-    /* corrupted config falls through to defaults */
-  }
-  return { provider: 'claude', model: '', apiKey: '', baseUrl: '' }
-}
-
-export function saveConfig(config: AIConfig) {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config))
-}
 
 export function providerMeta(id: ProviderId): ProviderMeta {
   return PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0]
 }
 
+export function defaultModel(id: ProviderId): string {
+  return providerMeta(id).models[0].id
+}
+
+/** Point the config at another provider, restoring that provider's saved key + model. */
+export function switchProvider(config: AIConfig, next: ProviderId): AIConfig {
+  const profiles = { ...config.profiles, [config.provider]: { apiKey: config.apiKey, model: config.model } }
+  const saved = profiles[next]
+  return { provider: next, model: saved?.model ?? '', apiKey: saved?.apiKey ?? '', profiles }
+}
+
+/** Fold the active provider's key + model back into `profiles` (call before saving). */
+export function commitProfile(config: AIConfig): AIConfig {
+  return { ...config, profiles: { ...config.profiles, [config.provider]: { apiKey: config.apiKey, model: config.model } } }
+}
+
+export function loadConfig(): AIConfig {
+  const fresh: AIConfig = { provider: DEFAULT_PROVIDER, model: '', apiKey: '', profiles: {} }
+  try {
+    const raw = localStorage.getItem(CONFIG_KEY)
+    if (!raw) return fresh
+    const saved = JSON.parse(raw)
+    const profiles: AIConfig['profiles'] = {}
+    for (const p of PROVIDERS) {
+      const entry = saved?.profiles?.[p.id]
+      if (entry) profiles[p.id] = { apiKey: String(entry.apiKey ?? ''), model: String(entry.model ?? '') }
+    }
+    // Pre-profiles format: one flat provider/model/apiKey. 'openzen' pointed at a
+    // made-up endpoint, so it is dropped rather than migrated.
+    if (!saved?.profiles && PROVIDERS.some((p) => p.id === saved?.provider)) {
+      profiles[saved.provider as ProviderId] = { apiKey: String(saved.apiKey ?? ''), model: String(saved.model ?? '') }
+    }
+    const provider: ProviderId = PROVIDERS.some((p) => p.id === saved?.provider) ? saved.provider : DEFAULT_PROVIDER
+    const active = profiles[provider]
+    return { provider, model: active?.model ?? '', apiKey: active?.apiKey ?? '', profiles }
+  } catch {
+    return fresh // corrupted config falls through to defaults
+  }
+}
+
+export function saveConfig(config: AIConfig) {
+  localStorage.setItem(CONFIG_KEY, JSON.stringify(commitProfile(config)))
+}
+
 export function resolvedModel(config: AIConfig): string {
-  return config.model.trim() || providerMeta(config.provider).defaultModel
+  return config.model.trim() || defaultModel(config.provider)
 }
 
 /* ------------------------------------------------------------------ *
@@ -275,13 +379,23 @@ export function validateLayout(raw: unknown): ValidationResult {
  *  stored in localStorage, and sent only to the selected provider.
  * ------------------------------------------------------------------ */
 
+/** Where Zen is reachable from the browser — see the /zen-proxy entry in vite.config.ts. */
+const ZEN_BASE = '/zen-proxy/v1'
+
 async function callClaude(
   config: AIConfig,
   systemPrompt: string,
   userPrompt: string,
   onText?: (fullText: string) => void,
+  viaZen = false,
 ): Promise<string> {
-  const client = new Anthropic({ apiKey: config.apiKey, dangerouslyAllowBrowser: true })
+  // The SDK appends /v1/messages itself and needs an absolute base URL. Zen's
+  // /messages route takes the same x-api-key header as Anthropic.
+  const client = new Anthropic({
+    apiKey: config.apiKey,
+    ...(viaZen ? { baseURL: `${window.location.origin}/zen-proxy` } : {}),
+    dangerouslyAllowBrowser: true,
+  })
   const stream = client.messages.stream({
     model: resolvedModel(config),
     max_tokens: 16000,
@@ -302,7 +416,7 @@ async function callClaude(
 }
 
 /**
- * OpenAI, Groq, and OpenZen all speak the /chat/completions dialect, but
+ * OpenAI, Groq, and Zen's chat models all speak the /chat/completions dialect, but
  * differ on parameter support: newer OpenAI models reject `max_tokens`
  * (requiring `max_completion_tokens`), and some models reject
  * `response_format`. Start from the provider's most likely shape and
@@ -315,13 +429,14 @@ async function callOpenAICompatible(
   baseUrl: string,
   onText?: (fullText: string) => void,
 ): Promise<string> {
+  const reasoningHeavy = config.provider === 'openai' || config.provider === 'zen'
   let useMaxCompletionTokens = config.provider === 'openai'
   let useJsonFormat = true
   let lastError = ''
   // Reasoning models (o-series / gpt-5 family) burn completion tokens on hidden
   // reasoning BEFORE emitting text — give OpenAI a much larger budget so the
   // JSON survives the thinking phase.
-  let tokenBudget = config.provider === 'openai' ? 32768 : 8192
+  let tokenBudget = reasoningHeavy ? 32768 : 8192
 
   let useStream = !!onText
 
@@ -435,19 +550,25 @@ async function callGemini(
   systemPrompt: string,
   userPrompt: string,
   onText?: (fullText: string) => void,
+  viaZen = false,
 ): Promise<string> {
   const model = resolvedModel(config)
   const endpoint = onText ? `${model}:streamGenerateContent?alt=sse` : `${model}:generateContent`
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${endpoint}`, {
+  const base = viaZen ? `${ZEN_BASE}/models` : 'https://generativelanguage.googleapis.com/v1beta/models'
+  const res = await fetch(`${base}/${endpoint}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
+    headers: {
+      'content-type': 'application/json',
+      'x-goog-api-key': config.apiKey,
+      ...(viaZen ? { authorization: `Bearer ${config.apiKey}` } : {}),
+    },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 16384 },
     }),
   })
-  if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  if (!res.ok) throw new Error(`${viaZen ? 'Zen (Gemini)' : 'Gemini'} API error ${res.status}: ${(await res.text()).slice(0, 200)}`)
 
   if (onText && res.body) {
     const reader = res.body.getReader()
@@ -488,6 +609,112 @@ async function callGemini(
 }
 
 /**
+ * OpenAI Responses API — the wire format Zen uses for GPT, Grok and Muse models.
+ * Reasoning tokens count against max_output_tokens, so the budget is generous.
+ */
+async function callResponses(
+  config: AIConfig,
+  systemPrompt: string,
+  userPrompt: string,
+  baseUrl: string,
+  onText?: (fullText: string) => void,
+): Promise<string> {
+  let useJsonFormat = true
+  let useStream = !!onText
+  let lastError = ''
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const body: Record<string, unknown> = {
+      model: resolvedModel(config),
+      instructions: systemPrompt,
+      input: userPrompt,
+      max_output_tokens: 32768,
+    }
+    if (useJsonFormat) body.text = { format: { type: 'json_object' } }
+    if (useStream) body.stream = true
+
+    const res = await fetch(`${baseUrl}/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
+      body: JSON.stringify(body),
+    })
+
+    if (res.ok && useStream && res.body) {
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let acc = ''
+      let incomplete = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop()!
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data:')) continue
+          try {
+            const event = JSON.parse(trimmed.slice(5).trim())
+            if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
+              acc += event.delta
+              onText!(acc)
+            } else if (event.type === 'response.incomplete') {
+              incomplete = event.response?.incomplete_details?.reason ?? 'unknown'
+            } else if (event.type === 'response.failed' || event.type === 'error') {
+              throw new Error(event.response?.error?.message ?? event.message ?? 'stream failed')
+            }
+          } catch (err) {
+            if (err instanceof SyntaxError) continue // malformed keep-alive line
+            throw err
+          }
+        }
+      }
+      if (acc) return acc
+      throw new Error(`zen returned no streamed content (${incomplete ? `incomplete: ${incomplete}` : 'empty response'})`)
+    }
+
+    if (res.ok) {
+      const data = await res.json()
+      const text = (data.output ?? [])
+        .filter((item: { type?: string }) => item.type === 'message')
+        .flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content ?? [])
+        .filter((part: { type?: string }) => part.type === 'output_text')
+        .map((part: { text?: string }) => part.text ?? '')
+        .join('')
+      if (text) return text
+      throw new Error(`zen returned no message content (status: ${data.status ?? 'unknown'})`)
+    }
+
+    lastError = await res.text()
+    if (res.status === 400 && useStream && /\bstream\b/i.test(lastError)) {
+      useStream = false
+      continue
+    }
+    if (res.status === 400 && useJsonFormat && /text\.format|json_object|response_format/i.test(lastError)) {
+      useJsonFormat = false
+      continue
+    }
+    break
+  }
+  throw new Error(`zen API error: ${lastError.slice(0, 200)}`)
+}
+
+/** Zen fronts several vendors; the model family decides which wire format to speak. */
+function callZen(
+  config: AIConfig,
+  systemPrompt: string,
+  userPrompt: string,
+  onText?: (fullText: string) => void,
+): Promise<string> {
+  const model = resolvedModel(config)
+  if (model.startsWith('claude-')) return callClaude(config, systemPrompt, userPrompt, onText, true)
+  if (model.startsWith('gemini-')) return callGemini(config, systemPrompt, userPrompt, onText, true)
+  if (/^(gpt-|grok-|muse-)/.test(model)) return callResponses(config, systemPrompt, userPrompt, ZEN_BASE, onText)
+  return callOpenAICompatible(config, systemPrompt, userPrompt, ZEN_BASE, onText)
+}
+
+/**
  * Send any (systemPrompt, userPrompt) pair through the configured provider.
  * When `onText` is passed, the response is streamed and `onText` receives the
  * accumulated text after every chunk; the full text is still returned.
@@ -506,8 +733,8 @@ export async function callModel(
       return callOpenAICompatible(config, systemPrompt, userPrompt, 'https://api.openai.com/v1', onText)
     case 'groq':
       return callOpenAICompatible(config, systemPrompt, userPrompt, 'https://api.groq.com/openai/v1', onText)
-    case 'openzen':
-      return callOpenAICompatible(config, systemPrompt, userPrompt, config.baseUrl.trim() || 'https://api.openzen.ai/v1', onText)
+    case 'zen':
+      return callZen(config, systemPrompt, userPrompt, onText)
     case 'gemini':
       return callGemini(config, systemPrompt, userPrompt, onText)
   }
